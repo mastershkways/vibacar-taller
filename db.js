@@ -203,7 +203,10 @@ CREATE INDEX IF NOT EXISTS idx_ot_asignaciones_ot ON ot_asignaciones(ot_id);
 // Columnas añadidas después de la primera versión. Formato: [tabla, columna, definición SQL].
 // Cuando haga falta una columna nueva, se añade aquí y migrar() la crea si no existe.
 const COLUMNAS_NUEVAS = [
-  // ['ot', 'ejemplo', "TEXT DEFAULT ''"],
+  // Preparación para la Fase 5: los usuarios podrían venir/sincronizarse desde Karve.
+  ['usuarios', 'karve_id', 'TEXT'],                       // identificador del usuario en Karve
+  ['usuarios', 'origen', "TEXT NOT NULL DEFAULT 'local'"], // local = clave en esta BD | karve = validación delegada
+  ['usuarios', 'ultimo_acceso', 'TEXT'],
 ];
 
 function asegurarColumna(tabla, columna, definicion) {

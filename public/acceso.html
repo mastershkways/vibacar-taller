@@ -1,0 +1,174 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Acceso · Gestión de Taller Vibacar</title>
+  <style>
+    :root {
+      --fondo: #f3f4f6;
+      --tarjeta: #ffffff;
+      --texto: #111827;
+      --texto-suave: #6b7280;
+      --borde: #d1d5db;
+      --primario: #1d4ed8;
+      --primario-oscuro: #1e40af;
+      --error-fondo: #fef2f2;
+      --error-texto: #b91c1c;
+      --error-borde: #fecaca;
+    }
+    * { box-sizing: border-box; }
+    html, body { height: 100%; margin: 0; }
+    body {
+      font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+      background: var(--fondo);
+      color: var(--texto);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 16px;
+      -webkit-font-smoothing: antialiased;
+    }
+    .tarjeta {
+      width: 100%;
+      max-width: 400px;
+      background: var(--tarjeta);
+      border-radius: 14px;
+      box-shadow: 0 10px 30px rgba(0, 0, 0, .08);
+      padding: 32px 28px;
+    }
+    .marca { text-align: center; margin-bottom: 24px; }
+    .marca .logo {
+      display: inline-flex; align-items: center; justify-content: center;
+      width: 56px; height: 56px; border-radius: 14px;
+      background: var(--primario); color: #fff;
+      font-weight: 700; font-size: 22px; letter-spacing: .5px;
+      margin-bottom: 12px;
+    }
+    .marca h1 { font-size: 20px; margin: 0 0 4px; }
+    .marca p { margin: 0; color: var(--texto-suave); font-size: 14px; }
+    label { display: block; font-size: 14px; font-weight: 600; margin: 14px 0 6px; }
+    input {
+      width: 100%;
+      font: inherit;
+      font-size: 17px;
+      padding: 14px 14px;
+      border: 1px solid var(--borde);
+      border-radius: 10px;
+      background: #fff;
+      color: var(--texto);
+      outline: none;
+      transition: border-color .15s, box-shadow .15s;
+    }
+    input:focus { border-color: var(--primario); box-shadow: 0 0 0 3px rgba(29, 78, 216, .15); }
+    button {
+      width: 100%;
+      margin-top: 22px;
+      padding: 15px;
+      font: inherit;
+      font-size: 17px;
+      font-weight: 600;
+      color: #fff;
+      background: var(--primario);
+      border: 0;
+      border-radius: 10px;
+      cursor: pointer;
+      min-height: 52px;
+      transition: background .15s;
+    }
+    button:hover { background: var(--primario-oscuro); }
+    button:disabled { opacity: .6; cursor: wait; }
+    .error {
+      display: none;
+      margin-top: 16px;
+      padding: 12px 14px;
+      border-radius: 10px;
+      background: var(--error-fondo);
+      color: var(--error-texto);
+      border: 1px solid var(--error-borde);
+      font-size: 14px;
+    }
+    .error.visible { display: block; }
+    .pie { text-align: center; color: var(--texto-suave); font-size: 12px; margin-top: 22px; }
+    @media (max-width: 420px) {
+      .tarjeta { padding: 26px 20px; border-radius: 12px; }
+    }
+  </style>
+</head>
+<body>
+  <main class="tarjeta">
+    <div class="marca">
+      <div class="logo" aria-hidden="true">VB</div>
+      <h1>Gestión de Taller Vibacar</h1>
+      <p>Introduce tus datos para entrar</p>
+    </div>
+
+    <form id="formulario" novalidate>
+      <label for="usuario">Usuario</label>
+      <input id="usuario" name="usuario" type="text" autocomplete="username" autocapitalize="none" autocorrect="off" spellcheck="false" required autofocus>
+
+      <label for="clave">Contraseña</label>
+      <input id="clave" name="clave" type="password" autocomplete="current-password" required>
+
+      <button id="boton" type="submit">Entrar</button>
+      <div id="error" class="error" role="alert"></div>
+    </form>
+
+    <p class="pie">Vibacar · Taller</p>
+  </main>
+
+  <script>
+    (function () {
+      const formulario = document.getElementById('formulario');
+      const boton = document.getElementById('boton');
+      const error = document.getElementById('error');
+      const campoUsuario = document.getElementById('usuario');
+      const campoClave = document.getElementById('clave');
+
+      // A dónde volver tras entrar (solo rutas internas, por seguridad).
+      const params = new URLSearchParams(location.search);
+      let volver = params.get('volver') || '/';
+      if (!volver.startsWith('/') || volver.startsWith('//')) volver = '/';
+
+      function mostrarError(texto) {
+        error.textContent = texto;
+        error.classList.add('visible');
+      }
+      function ocultarError() {
+        error.classList.remove('visible');
+      }
+
+      formulario.addEventListener('submit', async (ev) => {
+        ev.preventDefault();
+        ocultarError();
+        const usuario = campoUsuario.value.trim();
+        const clave = campoClave.value;
+        if (!usuario || !clave) { mostrarError('Indica usuario y contraseña.'); return; }
+
+        boton.disabled = true;
+        boton.textContent = 'Entrando…';
+        try {
+          const r = await fetch('/acceso', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
+            body: JSON.stringify({ usuario, clave }),
+          });
+          const datos = await r.json().catch(() => ({}));
+          if (r.ok && datos.ok) {
+            location.replace(volver);
+            return;
+          }
+          mostrarError(datos.error || 'No se ha podido entrar.');
+          campoClave.value = '';
+          campoClave.focus();
+        } catch (e) {
+          mostrarError('No hay conexión con el servidor. Inténtalo de nuevo.');
+        } finally {
+          boton.disabled = false;
+          boton.textContent = 'Entrar';
+        }
+      });
+    })();
+  </script>
+</body>
+</html>
