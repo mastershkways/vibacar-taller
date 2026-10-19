@@ -1,0 +1,19 @@
+{
+  "name": "vibacar-taller",
+  "version": "0.1.0",
+  "description": "Gestión de Taller Vibacar: ciclo de vida de las Órdenes de Trabajo (O.T.) de reparación y mantenimiento de maquinaria",
+  "private": true,
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "check": "node --check server.js"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "better-sqlite3": "^13.0.3",
+    "dotenv": "^16.4.5",
+    "express": "^4.21.2"
+  }
+}

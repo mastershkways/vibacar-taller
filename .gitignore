@@ -1,0 +1,11 @@
+node_modules/
+.env
+.DS_Store
+server.log
+.claude/
+
+# Base de datos y cosas sensibles
+.cache/
+
+# Notas de trabajo del asistente y documentos internos
+contexto/
