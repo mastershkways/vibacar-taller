@@ -13,9 +13,9 @@ const Database = require('better-sqlite3');
 const CARPETA_CACHE = path.join(__dirname, '.cache');
 const RUTA_BD = process.env.RUTA_BD || path.join(CARPETA_CACHE, 'datos.db');
 
-// Roles de la app. Se validan en código (permisos.js); no hay CHECK en la tabla
+// Roles de la app: la fuente de verdad es permisos.js. No hay CHECK en la tabla
 // para poder añadir roles sin reconstruir la tabla.
-const ROLES = ['admontaller', 'tecnico', 'recambista', 'financiero', 'comercial', 'sat'];
+const ROLES = Object.keys(require('./permisos').ROLES);
 
 // ---------------------------------------------------------------------------
 // Apertura y configuración

@@ -11,6 +11,7 @@ const path = require('path');
 const crypto = require('crypto');
 const express = require('express');
 const { db, ahora, verificarClave } = require('./db');
+const { describirRol } = require('./permisos');
 
 const NOMBRE_COOKIE = 'sid';
 const SESION_DIAS = Math.max(1, parseInt(process.env.SESION_DIAS, 10) || 30);
@@ -230,9 +231,10 @@ function montarRutasAcceso(app) {
     res.redirect('/acceso');
   });
 
-  // Quién soy (lo usa index.html al cargar). permisos.js (Paso 4) añadirá la lista de permisos.
+  // Quién soy (lo usa index.html al cargar): usuario + nombre del rol, alcance y lista de permisos.
   app.get('/api/sesion', requiereSesion, (req, res) => {
-    res.json({ usuario: req.usuario });
+    const r = describirRol(req.usuario.rol) || { nombre: req.usuario.rol, alcance: null, permisos: [] };
+    res.json({ usuario: req.usuario, rol: r.nombre, alcance: r.alcance, permisos: r.permisos });
   });
 }
 
