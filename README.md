@@ -42,4 +42,4 @@ La base de datos se crea sola en `.cache/datos.db` la primera vez.
 
 ## Estado del proyecto
 
-En desarrollo. El plan por fases está en `contexto/PLAN.md` (archivo local, no versionado).
+En desarrollo. **Fase 1 completada** (octubre de 2026): acceso con usuarios y roles, base de datos, API de O.T. y maestros, y la interfaz con Tablero, vista de tablet y listado. Siguiente: Fase 2 (maestros y mejora visual). El plan por fases está en `contexto/PLAN.md` (archivo local, no versionado).
