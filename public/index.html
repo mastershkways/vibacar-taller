@@ -1,0 +1,216 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Gestión de Taller Vibacar</title>
+  <link rel="icon" type="image/png" href="/img/logo.png">
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+
+<header class="cabecera">
+  <img src="/img/logo.png" alt="Vibacar" class="logo">
+  <div class="titulo">Gestión de Taller</div>
+  <nav id="nav"></nav>
+  <div class="usuario"><b id="usuario-nombre"></b><span id="usuario-rol"></span></div>
+  <form method="post" action="/acceso/salir"><button class="btn btn-pequeno" type="submit">Salir</button></form>
+</header>
+
+<main id="app"><div class="vacio">Cargando…</div></main>
+<div id="modales"></div>
+<div id="toasts"></div>
+
+<!-- ============================================================ Vistas -->
+
+<template id="tpl-kanban">
+  <div class="barra-vista">
+    <h2>Tablero</h2>
+    <span class="contador" data-ref="contador"></span>
+    <button class="btn btn-pequeno" data-accion="recargar">Actualizar</button>
+    <button class="btn btn-primario" data-accion="nueva" data-permiso="ot.crear">+ Nueva O.T.</button>
+  </div>
+  <div class="kanban" data-ref="columnas"></div>
+</template>
+
+<template id="tpl-misot">
+  <div class="barra-vista">
+    <h2>Mis O.T.</h2>
+    <span class="contador" data-ref="contador"></span>
+    <button class="btn btn-grande" data-accion="recargar">Actualizar</button>
+  </div>
+  <div class="misot" data-ref="lista"></div>
+</template>
+
+<template id="tpl-listado">
+  <div class="barra-vista">
+    <h2>Órdenes de trabajo</h2>
+    <span class="contador" data-ref="contador"></span>
+    <button class="btn btn-primario" data-accion="nueva" data-permiso="ot.crear">+ Nueva O.T.</button>
+  </div>
+  <form class="filtros" data-ref="filtros">
+    <div class="ancho"><label>Buscar</label><input type="search" name="q" placeholder="Nº, cliente, síntoma, bastidor, flota"></div>
+    <div><label>Fase</label><select name="fase" data-ref="fase"><option value="">Todas</option></select></div>
+    <div><label>Prioridad</label><select name="prioridad"><option value="">Todas</option><option value="1">Alta</option><option value="2">Media</option><option value="3">Baja</option></select></div>
+    <div><label>Mostrar</label><select name="abiertas"><option value="1">Abiertas</option><option value="0">Todas</option></select></div>
+    <div><button class="btn" type="submit">Filtrar</button></div>
+  </form>
+  <div class="tabla-envoltorio">
+    <table class="tabla">
+      <thead><tr><th>Nº</th><th>Cliente</th><th>Máquina</th><th>Síntoma</th><th>Estado</th><th>Prio.</th><th>Técnico</th><th>Abierta</th></tr></thead>
+      <tbody data-ref="filas"></tbody>
+    </table>
+    <div class="paginacion" data-ref="paginacion"></div>
+  </div>
+</template>
+
+<!-- ============================================================ Modales -->
+
+<template id="tpl-detalle">
+  <div class="modal-fondo">
+    <div class="modal">
+      <div class="modal-cabecera">
+        <h2><span data-ref="numero"></span> <span class="chip" data-ref="estado"></span> <span class="chip chip-claro" data-ref="prioridad"></span></h2>
+        <button class="cerrar" type="button" data-accion="cerrar" aria-label="Cerrar">×</button>
+      </div>
+      <div class="modal-cuerpo">
+        <div data-ref="avisos"></div>
+
+        <section>
+          <div class="datos">
+            <div><span>Cliente</span><b data-ref="cliente"></b></div>
+            <div><span>Máquina</span><span data-ref="maquina"></span></div>
+            <div><span>Técnico asignado</span><span data-ref="tecnico"></span></div>
+            <div><span>Abierta</span><span data-ref="creado"></span></div>
+          </div>
+        </section>
+
+        <section>
+          <h3>Datos de la O.T.</h3>
+          <form data-ref="form-datos">
+            <div class="fila">
+              <div><label>Tipo</label><select name="tipo"><option value="correctivo">Correctivo</option><option value="preventivo">Preventivo</option></select></div>
+              <div><label>Prioridad</label><select name="prioridad"><option value="1">Alta</option><option value="2">Media</option><option value="3">Baja</option></select></div>
+              <div><label>Origen</label><select name="origen"><option value="manual">Manual</option><option value="whatsapp">WhatsApp</option><option value="correo">Correo</option><option value="auto">Automático</option></select></div>
+            </div>
+            <label>Síntoma (lo que dice el cliente)</label>
+            <textarea name="sintoma" maxlength="200" rows="2"></textarea>
+            <label>Descripción del aviso</label>
+            <textarea name="descripcion" class="amplio" maxlength="4000"></textarea>
+            <label>Notas internas</label>
+            <textarea name="notas_internas" maxlength="4000"></textarea>
+            <div class="pista">Solo para el taller: no saldrán en el parte ni en el PDF.</div>
+            <div class="acciones" data-ref="acciones-datos"><button class="btn btn-primario" type="submit">Guardar cambios</button></div>
+          </form>
+        </section>
+
+        <section data-ref="sec-estado">
+          <h3>Cambiar estado</h3>
+          <div class="estado-botones" data-ref="transiciones"></div>
+          <label>Trabajo realizado / nota del cambio</label>
+          <textarea data-ref="nota-estado" class="amplio" maxlength="1000" placeholder="Describe qué has hecho. Puedes usar el dictado de voz del teclado."></textarea>
+        </section>
+
+        <section data-ref="sec-asignacion">
+          <h3>Asignación</h3>
+          <div data-ref="propuestas"></div>
+          <form data-ref="form-asignar" class="inline" style="margin-top:10px">
+            <select name="tecnico_id" data-ref="tecnicos"></select>
+            <input type="text" name="nota" placeholder="Nota (opcional)" maxlength="1000">
+            <button class="btn" type="submit" data-accion="proponer">Proponer</button>
+            <button class="btn btn-primario" type="button" data-accion="asignar-ya" data-permiso="ot.aprobar_asignacion">Asignar ahora</button>
+          </form>
+        </section>
+
+        <section>
+          <h3>Historial</h3>
+          <ul class="historial" data-ref="historial"></ul>
+        </section>
+      </div>
+    </div>
+  </div>
+</template>
+
+<template id="tpl-nueva">
+  <div class="modal-fondo">
+    <div class="modal estrecho">
+      <div class="modal-cabecera">
+        <h2>Nueva orden de trabajo</h2>
+        <button class="cerrar" type="button" data-accion="cerrar" aria-label="Cerrar">×</button>
+      </div>
+      <div class="modal-cuerpo">
+        <div data-ref="avisos"></div>
+        <form data-ref="form">
+          <label>Cliente</label>
+          <input type="search" data-ref="buscar-cliente" placeholder="Escribe para filtrar…" autocomplete="off">
+          <select name="cliente_id" data-ref="clientes" size="5" style="margin-top:6px" required></select>
+          <div class="inline" data-permiso="clientes.gestionar" style="margin-top:6px">
+            <input type="text" data-ref="nuevo-cliente" placeholder="¿No está? Nombre del nuevo cliente" maxlength="200">
+            <button class="btn btn-pequeno" type="button" data-accion="crear-cliente">Crear</button>
+          </div>
+
+          <label>Máquina</label>
+          <select name="maquina_id" data-ref="maquinas"><option value="">Sin máquina</option></select>
+          <div class="inline" data-permiso="maquinas.gestionar" style="margin-top:6px">
+            <input type="text" data-ref="nueva-marca" placeholder="Marca" maxlength="100">
+            <input type="text" data-ref="nuevo-modelo" placeholder="Modelo" maxlength="100">
+            <input type="text" data-ref="nuevo-bastidor" placeholder="Bastidor / flota" maxlength="100">
+            <button class="btn btn-pequeno" type="button" data-accion="crear-maquina">Crear</button>
+          </div>
+
+          <div class="fila">
+            <div><label>Tipo</label><select name="tipo"><option value="correctivo">Correctivo</option><option value="preventivo">Preventivo</option></select></div>
+            <div><label>Prioridad</label><select name="prioridad"><option value="">Según estado</option><option value="1">Alta</option><option value="2">Media</option><option value="3">Baja</option></select></div>
+            <div><label>Origen</label><select name="origen"><option value="manual">Manual</option><option value="whatsapp">WhatsApp</option><option value="correo">Correo</option><option value="auto">Automático</option></select></div>
+          </div>
+          <label>Síntoma (lo que dice el cliente)</label>
+          <textarea name="sintoma" class="amplio" maxlength="200" placeholder="Ej.: no arranca, pierde aceite…"></textarea>
+          <label>Descripción del aviso</label>
+          <textarea name="descripcion" maxlength="4000"></textarea>
+          <label>Notas internas</label>
+          <textarea name="notas_internas" maxlength="4000" rows="2"></textarea>
+          <div class="acciones">
+            <button class="btn btn-primario" type="submit">Abrir O.T.</button>
+            <button class="btn" type="button" data-accion="cerrar">Cancelar</button>
+          </div>
+        </form>
+      </div>
+    </div>
+  </div>
+</template>
+
+<template id="tpl-parte">
+  <div class="modal-fondo">
+    <div class="modal estrecho">
+      <div class="modal-cabecera">
+        <h2 data-ref="titulo"></h2>
+        <button class="cerrar" type="button" data-accion="cerrar" aria-label="Cerrar">×</button>
+      </div>
+      <div class="modal-cuerpo">
+        <div data-ref="avisos"></div>
+        <label>Trabajo realizado / nota</label>
+        <textarea data-ref="nota" class="amplio" maxlength="1000" style="min-height:220px;font-size:19px" placeholder="Dicta o escribe qué has hecho."></textarea>
+        <div class="acciones">
+          <button class="btn btn-primario btn-grande" type="button" data-accion="confirmar"></button>
+          <button class="btn btn-grande" type="button" data-accion="cerrar">Cancelar</button>
+        </div>
+      </div>
+    </div>
+  </div>
+</template>
+
+<template id="tpl-elegir">
+  <div class="modal-fondo">
+    <div class="modal estrecho">
+      <div class="modal-cabecera">
+        <h2 data-ref="titulo"></h2>
+        <button class="cerrar" type="button" data-accion="cerrar" aria-label="Cerrar">×</button>
+      </div>
+      <div class="modal-cuerpo"><div class="estado-botones" data-ref="opciones" style="padding-top:12px"></div></div>
+    </div>
+  </div>
+</template>
+
+<script src="/app.js"></script>
+</body>
+</html>

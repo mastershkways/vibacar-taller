@@ -154,6 +154,7 @@ function leerCamposOT(body, parcial) {
   if (!parcial || body.origen !== undefined) campos.origen = enumerado(body.origen, { nombre: 'origen', valores: ORIGENES, defecto: 'manual' });
   if (body.sintoma !== undefined) campos.sintoma = texto(body.sintoma, { nombre: 'sintoma', max: 200 });
   if (body.descripcion !== undefined) campos.descripcion = texto(body.descripcion, { nombre: 'descripcion', max: 4000 });
+  if (body.notas_internas !== undefined) campos.notas_internas = texto(body.notas_internas, { nombre: 'notas_internas', max: 4000 });
   const prioridad = entero(body.prioridad, { nombre: 'prioridad', min: 1, max: 3 });
   if (prioridad !== null) campos.prioridad = prioridad;
   return campos;
@@ -273,10 +274,10 @@ module.exports = function montarRutasOT(app) {
     const crear = db.transaction(() => {
       const num = siguienteNumeroOT();
       const info = db.prepare(`
-        INSERT INTO ot (numero, anio, secuencia, cliente_id, maquina_id, estado, prioridad, tipo, origen, sintoma, descripcion, creado_por, creado)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+        INSERT INTO ot (numero, anio, secuencia, cliente_id, maquina_id, estado, prioridad, tipo, origen, sintoma, descripcion, notas_internas, creado_por, creado)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
         .run(num.numero, num.anio, num.secuencia, campos.cliente_id, campos.maquina_id ?? null, estado.codigo, prioridad,
-          campos.tipo, campos.origen, campos.sintoma ?? null, campos.descripcion ?? null, req.usuario.id, ahora());
+          campos.tipo, campos.origen, campos.sintoma ?? null, campos.descripcion ?? null, campos.notas_internas ?? null, req.usuario.id, ahora());
       stmt.historial.run(info.lastInsertRowid, null, estado.codigo, req.usuario.id, ahora(), 'Apertura de la O.T.');
       return info.lastInsertRowid;
     });

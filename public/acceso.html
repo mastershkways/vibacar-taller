@@ -4,6 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Acceso · Gestión de Taller Vibacar</title>
+  <link rel="icon" type="image/png" href="/img/logo.png">
   <style>
     :root {
       --fondo: #f3f4f6;
@@ -11,8 +12,8 @@
       --texto: #111827;
       --texto-suave: #6b7280;
       --borde: #d1d5db;
-      --primario: #1d4ed8;
-      --primario-oscuro: #1e40af;
+      --primario: #ff4e00;
+      --primario-oscuro: #d94200;
       --error-fondo: #fef2f2;
       --error-texto: #b91c1c;
       --error-borde: #fecaca;
@@ -38,13 +39,7 @@
       padding: 32px 28px;
     }
     .marca { text-align: center; margin-bottom: 24px; }
-    .marca .logo {
-      display: inline-flex; align-items: center; justify-content: center;
-      width: 56px; height: 56px; border-radius: 14px;
-      background: var(--primario); color: #fff;
-      font-weight: 700; font-size: 22px; letter-spacing: .5px;
-      margin-bottom: 12px;
-    }
+    .marca .logo { height: 64px; width: auto; border-radius: 10px; margin-bottom: 12px; }
     .marca h1 { font-size: 20px; margin: 0 0 4px; }
     .marca p { margin: 0; color: var(--texto-suave); font-size: 14px; }
     label { display: block; font-size: 14px; font-weight: 600; margin: 14px 0 6px; }
@@ -60,7 +55,7 @@
       outline: none;
       transition: border-color .15s, box-shadow .15s;
     }
-    input:focus { border-color: var(--primario); box-shadow: 0 0 0 3px rgba(29, 78, 216, .15); }
+    input:focus { border-color: var(--primario); box-shadow: 0 0 0 3px rgba(255, 78, 0, .15); }
     button {
       width: 100%;
       margin-top: 22px;
@@ -98,7 +93,7 @@
 <body>
   <main class="tarjeta">
     <div class="marca">
-      <div class="logo" aria-hidden="true">VB</div>
+      <img src="/img/logo.png" alt="Vibacar" class="logo">
       <h1>Gestión de Taller Vibacar</h1>
       <p>Introduce tus datos para entrar</p>
     </div>

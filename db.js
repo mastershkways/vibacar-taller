@@ -207,6 +207,8 @@ const COLUMNAS_NUEVAS = [
   ['usuarios', 'karve_id', 'TEXT'],                       // identificador del usuario en Karve
   ['usuarios', 'origen', "TEXT NOT NULL DEFAULT 'local'"], // local = clave en esta BD | karve = validación delegada
   ['usuarios', 'ultimo_acceso', 'TEXT'],
+  // Paso 6: notas internas del taller sobre la O.T. (no saldrán en el parte/PDF).
+  ['ot', 'notas_internas', 'TEXT'],
 ];
 
 function asegurarColumna(tabla, columna, definicion) {

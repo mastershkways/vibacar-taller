@@ -25,7 +25,7 @@ if (!SECRETO) {
 }
 
 // Rutas que se sirven sin sesión (la pantalla de acceso y sus recursos).
-const RUTAS_PUBLICAS = ['/acceso', '/acceso.html', '/favicon.ico'];
+const RUTAS_PUBLICAS = ['/acceso', '/acceso.html', '/favicon.ico', '/img/logo.png'];
 
 // ---------------------------------------------------------------------------
 // Utilidades
