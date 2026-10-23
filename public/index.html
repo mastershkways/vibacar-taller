@@ -4,6 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Gestión de Taller Vibacar</title>
+  <meta name="theme-color" content="#ff4e00">
   <link rel="icon" type="image/png" href="/img/logo.png">
   <link rel="stylesheet" href="/style.css">
 </head>
@@ -34,7 +35,7 @@
 </template>
 
 <template id="tpl-misot">
-  <div class="barra-vista">
+  <div class="barra-vista misot-barra">
     <h2>Mis O.T.</h2>
     <span class="contador" data-ref="contador"></span>
     <button class="btn btn-grande" data-accion="recargar">Actualizar</button>
@@ -114,7 +115,7 @@
         <section data-ref="sec-asignacion">
           <h3>Asignación</h3>
           <div data-ref="propuestas"></div>
-          <form data-ref="form-asignar" class="inline" style="margin-top:10px">
+          <form data-ref="form-asignar" class="inline separado">
             <select name="tecnico_id" data-ref="tecnicos"></select>
             <input type="text" name="nota" placeholder="Nota (opcional)" maxlength="1000">
             <button class="btn" type="submit" data-accion="proponer">Proponer</button>
@@ -143,15 +144,15 @@
         <form data-ref="form">
           <label>Cliente</label>
           <input type="search" data-ref="buscar-cliente" placeholder="Escribe para filtrar…" autocomplete="off">
-          <select name="cliente_id" data-ref="clientes" size="5" style="margin-top:6px" required></select>
-          <div class="inline" data-permiso="clientes.gestionar" style="margin-top:6px">
+          <select name="cliente_id" data-ref="clientes" size="5" class="separado" required></select>
+          <div class="inline separado" data-permiso="clientes.gestionar">
             <input type="text" data-ref="nuevo-cliente" placeholder="¿No está? Nombre del nuevo cliente" maxlength="200">
             <button class="btn btn-pequeno" type="button" data-accion="crear-cliente">Crear</button>
           </div>
 
           <label>Máquina</label>
           <select name="maquina_id" data-ref="maquinas"><option value="">Sin máquina</option></select>
-          <div class="inline" data-permiso="maquinas.gestionar" style="margin-top:6px">
+          <div class="inline separado" data-permiso="maquinas.gestionar">
             <input type="text" data-ref="nueva-marca" placeholder="Marca" maxlength="100">
             <input type="text" data-ref="nuevo-modelo" placeholder="Modelo" maxlength="100">
             <input type="text" data-ref="nuevo-bastidor" placeholder="Bastidor / flota" maxlength="100">
@@ -189,7 +190,7 @@
       <div class="modal-cuerpo">
         <div data-ref="avisos"></div>
         <label>Trabajo realizado / nota</label>
-        <textarea data-ref="nota" class="amplio" maxlength="1000" style="min-height:220px;font-size:19px" placeholder="Dicta o escribe qué has hecho."></textarea>
+        <textarea data-ref="nota" class="amplio dictado" maxlength="1000" placeholder="Dicta o escribe qué has hecho."></textarea>
         <div class="acciones">
           <button class="btn btn-primario btn-grande" type="button" data-accion="confirmar"></button>
           <button class="btn btn-grande" type="button" data-accion="cerrar">Cancelar</button>
@@ -206,7 +207,7 @@
         <h2 data-ref="titulo"></h2>
         <button class="cerrar" type="button" data-accion="cerrar" aria-label="Cerrar">×</button>
       </div>
-      <div class="modal-cuerpo"><div class="estado-botones" data-ref="opciones" style="padding-top:12px"></div></div>
+      <div class="modal-cuerpo"><div class="estado-botones opciones" data-ref="opciones"></div></div>
     </div>
   </div>
 </template>

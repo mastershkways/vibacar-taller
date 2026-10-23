@@ -69,7 +69,14 @@ function toast(mensaje, tipo = '') {
   el.className = `toast ${tipo ? 'toast-' + tipo : ''}`;
   el.textContent = mensaje;
   document.getElementById('toasts').append(el);
-  setTimeout(() => el.remove(), tipo === 'error' ? 7000 : 4000);
+  const quitar = () => {
+    if (!el.isConnected || el.classList.contains('saliendo')) return;
+    el.classList.add('saliendo');
+    el.addEventListener('animationend', () => el.remove(), { once: true });
+    setTimeout(() => el.remove(), 400); // por si el navegador no anima
+  };
+  el.onclick = quitar;
+  setTimeout(quitar, tipo === 'error' ? 7000 : 4000);
 }
 
 function aviso(contenedor, mensaje, tipo = 'error', botonTexto = null, botonFn = null) {
@@ -122,17 +129,25 @@ function abrirModal(nodo) {
   const capa = document.getElementById('modales');
   capa.append(nodo);
   aplicarPermisos(nodo);
-  for (const b of $$('[data-accion="cerrar"]', nodo)) b.onclick = () => nodo.remove();
-  nodo.addEventListener('click', (e) => { if (e.target === nodo) nodo.remove(); });
+  for (const b of $$('[data-accion="cerrar"]', nodo)) b.onclick = () => cerrarModal(nodo);
+  nodo.addEventListener('click', (e) => { if (e.target === nodo) cerrarModal(nodo); });
   const primero = $('input:not([type=hidden]), select, textarea, button', $('.modal-cuerpo', nodo) || nodo);
   if (primero) setTimeout(() => primero.focus(), 50);
   return nodo;
 }
 
+// Cierra con la animación de salida (clase .cerrando) y quita el nodo al terminar.
+function cerrarModal(nodo) {
+  if (!nodo || !nodo.isConnected || nodo.classList.contains('cerrando')) return;
+  nodo.classList.add('cerrando');
+  nodo.addEventListener('animationend', () => nodo.remove(), { once: true });
+  setTimeout(() => nodo.remove(), 300); // por si el navegador no anima
+}
+
 document.addEventListener('keydown', (e) => {
   if (e.key === 'Escape') {
-    const abiertos = $$('#modales > .modal-fondo');
-    if (abiertos.length) abiertos[abiertos.length - 1].remove();
+    const abiertos = $$('#modales > .modal-fondo:not(.cerrando)');
+    if (abiertos.length) cerrarModal(abiertos[abiertos.length - 1]);
   }
 });
 
@@ -148,7 +163,7 @@ function elegir(titulo, opciones) {
       b.className = 'btn';
       b.textContent = op.etiqueta;
       if (op.color) b.style.borderColor = op.color;
-      b.onclick = () => { nodo.remove(); resolver(op.valor); };
+      b.onclick = () => { cerrarModal(nodo); resolver(op.valor); };
       cont.append(b);
     }
     abrirModal(nodo);
@@ -240,6 +255,7 @@ function mostrarVista(nombre) {
   app.innerHTML = '';
   // Las plantillas de vista tienen varios hijos de primer nivel: se clona el fragmento entero.
   app.append(document.getElementById(`tpl-${nombre}`).content.cloneNode(true));
+  app.classList.remove('entra'); void app.offsetWidth; app.classList.add('entra'); // reinicia la animación
   aplicarPermisos(app);
   for (const b of $$('[data-accion="nueva"]', app)) b.onclick = abrirNuevaOT;
   VISTAS[nombre].pintar();
@@ -357,10 +373,11 @@ function tarjetaKanban(o) {
     el.addEventListener('dragstart', (e) => {
       e.dataTransfer.setData('text/plain', String(o.id));
       e.dataTransfer.effectAllowed = 'move';
-      el.classList.add('arrastrando');
+      el.classList.add('agarrada');                                 // así se captura la imagen de arrastre
+      setTimeout(() => { el.classList.remove('agarrada'); el.classList.add('arrastrando'); }, 0); // y el hueco queda atenuado
       marcarColumnasDestino(o);
     });
-    el.addEventListener('dragend', () => { el.classList.remove('arrastrando'); desmarcarColumnas(); });
+    el.addEventListener('dragend', () => { el.classList.remove('agarrada', 'arrastrando'); desmarcarColumnas(); });
   }
   return el;
 }
@@ -463,7 +480,7 @@ function abrirParte(o, destino, alTerminar) {
     boton.disabled = true;
     const ok = await cambiarEstado(o, destino, ref('nota', nodo).value.trim(), ref('avisos', nodo));
     boton.disabled = false;
-    if (ok) { nodo.remove(); alTerminar && alTerminar(); }
+    if (ok) { cerrarModal(nodo); alTerminar && alTerminar(); }
   };
   abrirModal(nodo);
   ref('nota', nodo).focus();
@@ -807,7 +824,7 @@ async function abrirNuevaOT() {
       };
       const ot = await api('/api/ot', { method: 'POST', body });
       toast(`O.T. ${ot.numero} abierta`, 'ok');
-      nodo.remove();
+      cerrarModal(nodo);
       refrescarVista();
       abrirDetalle(ot.id);
     } catch (err) {
