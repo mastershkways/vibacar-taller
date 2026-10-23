@@ -87,7 +87,7 @@ CREATE TABLE IF NOT EXISTS clientes (
   telefono      TEXT,
   exige_pedido  INTEGER NOT NULL DEFAULT 0,   -- 1 = exige Nº de Pedido antes de facturar
   karve_id      TEXT,                          -- código del cliente en Karve (Fase 5)
-  activo        INTEGER NOT NULL DEFAULT 1,
+  activo        INTEGER NOT NULL DEFAULT 1,     -- baja lógica: nunca se borra un cliente
   creado        TEXT    NOT NULL DEFAULT (datetime('now','localtime')),
   actualizado   TEXT
 );
@@ -209,6 +209,10 @@ const COLUMNAS_NUEVAS = [
   ['usuarios', 'ultimo_acceso', 'TEXT'],
   // Paso 6: notas internas del taller sobre la O.T. (no saldrán en el parte/PDF).
   ['ot', 'notas_internas', 'TEXT'],
+  // Fase 2 (F2-02): maestro de clientes. La tabla local es un espejo de Karve (Fase 5):
+  // origen = manual (creado aquí) | karve (sincronizado; karve_id es su código en Karve).
+  ['clientes', 'direccion', 'TEXT'],
+  ['clientes', 'origen', "TEXT NOT NULL DEFAULT 'manual'"],
 ];
 
 function asegurarColumna(tabla, columna, definicion) {

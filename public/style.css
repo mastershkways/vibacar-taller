@@ -206,6 +206,9 @@ textarea.dictado { min-height: 220px; font-size: 19px; }
 .fila { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 0 16px; }
 .pista { font-size: 12px; color: var(--texto-suave); margin-top: 6px; }
 .acciones { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 20px; }
+.acciones .derecha { margin-left: auto; }
+label.check { display: flex; align-items: center; gap: 10px; color: var(--texto); font-weight: 500; font-size: 14px; cursor: pointer; }
+label.check input { width: 18px; height: 18px; accent-color: var(--naranja); margin: 0; }
 .inline { display: flex; gap: 8px; align-items: center; }
 .inline input, .inline select { flex: 1; }
 .inline.separado { margin-top: 10px; }
@@ -218,6 +221,8 @@ textarea.dictado { min-height: 220px; font-size: 19px; }
   transition: var(--transicion);
 }
 .chip-claro { background: var(--fondo-2); color: var(--texto); border: 1px solid var(--borde); }
+.chip-ok { background: var(--ok); }
+.chip-naranja { background: var(--naranja); }
 .prio { display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin-right: 6px; vertical-align: middle; box-shadow: 0 0 0 2px #fff; }
 .prio-1 { background: var(--error); }
 .prio-2 { background: var(--aviso); }
@@ -309,6 +314,8 @@ table.tabla { width: 100%; border-collapse: collapse; font-size: 14px; }
 .tabla tbody tr:hover td.num { color: var(--naranja-oscuro); }
 .tabla tbody tr:last-child td { border-bottom: 0; }
 .tabla td.num { font-weight: 700; white-space: nowrap; }
+.tabla tr.inactivo td { color: var(--texto-tenue); }
+.tabla tr.inactivo td.num { font-weight: 600; text-decoration: line-through; text-decoration-color: var(--borde-fuerte); }
 .paginacion { display: flex; gap: 8px; align-items: center; justify-content: flex-end; padding: 12px 14px; border-top: 1px solid var(--borde); color: var(--texto-suave); font-size: 13px; }
 
 /* --- 4.7 Avisos en línea -------------------------------------------------- */
@@ -319,6 +326,7 @@ table.tabla { width: 100%; border-collapse: collapse; font-size: 14px; }
 }
 .aviso-error { background: var(--error-fondo); border: 1px solid var(--error-borde); color: var(--error); }
 .aviso-conflicto { background: var(--aviso-fondo); border: 1px solid var(--aviso-borde); color: var(--aviso-texto); }
+.aviso-info { background: var(--naranja-suave); border: 1px solid var(--naranja-borde); color: var(--naranja-oscuro); }
 .aviso .btn { margin-left: auto; }
 
 /* --- 4.8 Historial y propuestas ------------------------------------------- */

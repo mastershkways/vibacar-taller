@@ -74,7 +74,7 @@ Para parar: `Ctrl+C`. Tras cambiar cualquier `.js` de la raíz hay que reiniciar
 1. Abre `http://localhost:3010` en el navegador (desde otro PC de la red, la IP del servidor y el puerto).
 2. Entra con `APP_USUARIO` y `APP_CLAVE`.
 3. La pantalla depende del rol: el administrador ve el Tablero; un técnico ve "Mis O.T."; el resto, el Listado.
-4. Crea el primer cliente y su máquina desde el botón "+ Nueva O.T." (alta rápida dentro del formulario).
+4. Crea los clientes en la pestaña "Clientes" (o el primero directamente desde "+ Nueva O.T.", que también permite el alta rápida de cliente y máquina). Los clientes no se borran: se desactivan desde su ficha.
 
 Tras 10 intentos fallidos de contraseña, un usuario queda bloqueado 15 minutos.
 
@@ -135,6 +135,14 @@ node server.js
 
 (en PowerShell: `$env:PORT=5055; $env:RUTA_BD='C:\temp\prueba.db'; node server.js`).
 
+Para ver la interfaz con datos sin tener que crearlos a mano:
+
+```
+node scripts/generar-datos-prueba.js
+```
+
+Crea usuarios de prueba de todos los roles (`tecnico1`, `tecnico2`, `sat1`, `recambista1`, `finanzas1`, `comercial1`; la contraseña se muestra al terminar), 12 clientes (manuales y "de Karve", dos desactivados), sus máquinas y 20 O.T. repartidas por todas las columnas del Tablero, con historial y asignaciones. Se niega a ejecutarse si ya hay datos: `--limpiar` borra antes todas las O.T., máquinas y clientes (no los usuarios) y `--anadir` añade otra tanda. Respeta la numeración (sigue el contador) y no hace falta reiniciar el servidor. **Solo para bases de desarrollo o pruebas.**
+
 ## 12. Estructura de archivos
 
 ```
@@ -147,7 +155,7 @@ validar.js           validadores de entrada y ErrorHttp
 rutas-maestros.js    API: clientes, máquinas, estados, técnicos, usuarios
 rutas-ot.js          API: O.T., estados, asignaciones, Kanban
 public/              interfaz: acceso.html, index.html, style.css, app.js, img/
-scripts/             crear-usuario.js, fijar-contador.js
+scripts/             crear-usuario.js, fijar-contador.js, generar-datos-prueba.js
 docs/                esta documentación
 .cache/              base de datos (no se versiona)
 .env                 configuración y credenciales (no se versiona)

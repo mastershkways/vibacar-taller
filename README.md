@@ -9,7 +9,8 @@ Aplicación web para gestionar las **Órdenes de Trabajo (O.T.)** de reparación
 - **Vista para tablet** del técnico: solo ve sus O.T. asignadas, registra tiempos, checklist, fotos y firma del cliente.
 - **Recambios**: el almacén vincula los repuestos usados a cada O.T.
 - **Cierre y facturación**: parte de trabajo, albarán y reclamación automática del nº de pedido al cliente cuando lo exige.
-- **Integración con Karve** (el ERP) para inventario, clientes, máquinas y numeración.
+- **Clientes**: ficha con razón social, NIF/CIF, email, teléfono y dirección; buscador rápido; los clientes no se borran, se desactivan.
+- **Integración con Karve** (el ERP) para inventario, clientes, máquinas y numeración. Hasta que llegue, los clientes se dan de alta a mano y la pantalla indica si cada uno es manual o viene de Karve.
 - **Ayuda de IA**: redacta el parte para el cliente a partir de las notas del técnico y sugiere mantenimientos preventivos.
 
 ## Quién la usa
@@ -42,4 +43,4 @@ La base de datos se crea sola en `.cache/datos.db` la primera vez.
 
 ## Estado del proyecto
 
-En desarrollo. **Fase 1 completada** (octubre de 2026): acceso con usuarios y roles, base de datos, API de O.T. y maestros, y la interfaz con Tablero, vista de tablet y listado. Siguiente: Fase 2 (maestros y mejora visual). El plan por fases está en `contexto/PLAN.md` (archivo local, no versionado).
+En desarrollo. **Fase 1 completada** (octubre de 2026): acceso con usuarios y roles, base de datos, API de O.T. y maestros, y la interfaz con Tablero, vista de tablet y listado. **Fase 2 en curso**: rediseño visual hecho y pantalla de Clientes; siguen Máquinas y usuarios. El plan por fases está en `contexto/PLAN.md` (archivo local, no versionado).

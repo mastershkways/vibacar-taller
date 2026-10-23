@@ -65,6 +65,24 @@
   </div>
 </template>
 
+<template id="tpl-clientes">
+  <div class="barra-vista">
+    <h2>Clientes</h2>
+    <span class="contador" data-ref="contador"></span>
+    <button class="btn btn-primario" data-accion="nuevo-cliente" data-permiso="clientes.gestionar">+ Nuevo cliente</button>
+  </div>
+  <form class="filtros" data-ref="filtros">
+    <div class="ancho"><label>Buscar</label><input type="search" name="q" placeholder="Razón social, NIF/CIF, email, teléfono o código Karve" autocomplete="off"></div>
+    <div><label>Mostrar</label><select name="todos"><option value="">Activos</option><option value="1">Todos</option></select></div>
+  </form>
+  <div class="tabla-envoltorio">
+    <table class="tabla">
+      <thead><tr><th>Razón social</th><th>NIF/CIF</th><th>Teléfono</th><th>Email</th><th>Origen</th><th>Estado</th></tr></thead>
+      <tbody data-ref="filas"></tbody>
+    </table>
+  </div>
+</template>
+
 <!-- ============================================================ Modales -->
 
 <template id="tpl-detalle">
@@ -173,6 +191,40 @@
           <div class="acciones">
             <button class="btn btn-primario" type="submit">Abrir O.T.</button>
             <button class="btn" type="button" data-accion="cerrar">Cancelar</button>
+          </div>
+        </form>
+      </div>
+    </div>
+  </div>
+</template>
+
+<template id="tpl-cliente">
+  <div class="modal-fondo">
+    <div class="modal estrecho">
+      <div class="modal-cabecera">
+        <h2 data-ref="titulo"></h2>
+        <button class="cerrar" type="button" data-accion="cerrar" aria-label="Cerrar">×</button>
+      </div>
+      <div class="modal-cuerpo">
+        <div class="aviso aviso-info" data-ref="aviso-karve">La sincronización con Karve se habilitará en la Fase 5. Hasta entonces los clientes se dan de alta a mano.</div>
+        <div data-ref="avisos"></div>
+        <form data-ref="form">
+          <label>Razón social</label>
+          <input type="text" name="nombre" maxlength="200" required autocomplete="off">
+          <div class="fila">
+            <div><label>NIF/CIF</label><input type="text" name="cif" maxlength="20" autocomplete="off"></div>
+            <div><label>Teléfono</label><input type="text" name="telefono" maxlength="50" inputmode="tel" autocomplete="off"></div>
+          </div>
+          <label>Email</label>
+          <input type="email" name="email" maxlength="200" autocomplete="off">
+          <label>Dirección</label>
+          <textarea name="direccion" rows="2" maxlength="300"></textarea>
+          <label class="check"><input type="checkbox" name="exige_pedido"> Exige nº de pedido antes de facturar</label>
+          <div class="datos separado" data-ref="meta"></div>
+          <div class="acciones">
+            <button class="btn btn-primario" type="submit" data-ref="guardar">Guardar</button>
+            <button class="btn" type="button" data-accion="cerrar">Cancelar</button>
+            <button class="btn btn-peligro derecha oculto" type="button" data-ref="desactivar">Desactivar</button>
           </div>
         </form>
       </div>

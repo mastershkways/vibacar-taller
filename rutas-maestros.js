@@ -24,7 +24,8 @@ module.exports = function montarRutasMaestros(app) {
   const r = express.Router();
 
   // -------------------------------------------------------------------------
-  // Clientes
+  // Clientes — espejo local del maestro de Karve (Fase 5). Baja lógica con `activo`;
+  // `origen` (manual | karve) y `karve_id` los fijará la sincronización, no la API.
   // -------------------------------------------------------------------------
   r.get('/clientes', requierePermiso('clientes.ver'), (req, res) => {
     const q = texto(req.query.q, { nombre: 'q', max: 100 });
@@ -32,8 +33,11 @@ module.exports = function montarRutasMaestros(app) {
     let sql = 'SELECT * FROM clientes WHERE 1 = 1';
     const p = [];
     if (!todos) sql += ' AND activo = 1';
-    if (q) { sql += ' AND (nombre LIKE ? OR cif LIKE ? OR karve_id LIKE ?)'; p.push(`%${q}%`, `%${q}%`, `%${q}%`); }
-    sql += ' ORDER BY nombre COLLATE NOCASE LIMIT 500';
+    if (q) {
+      sql += ' AND (nombre LIKE ? OR cif LIKE ? OR karve_id LIKE ? OR email LIKE ? OR telefono LIKE ?)';
+      p.push(`%${q}%`, `%${q}%`, `%${q}%`, `%${q}%`, `%${q}%`);
+    }
+    sql += ' ORDER BY activo DESC, nombre COLLATE NOCASE LIMIT 500';
     res.json(db.prepare(sql).all(...p));
   });
 
@@ -46,27 +50,43 @@ module.exports = function montarRutasMaestros(app) {
   });
 
   function leerCliente(body, parcial) {
+    const email = texto(body.email, { nombre: 'email', max: 200 });
+    if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) throw new ErrorHttp(400, 'El email no tiene un formato válido');
+    const cif = texto(body.cif, { nombre: 'cif', max: 20 });
     return {
       nombre: texto(body.nombre, { nombre: 'nombre', obligatorio: !parcial, max: 200 }) ?? undefined,
-      cif: texto(body.cif, { nombre: 'cif', max: 20 }) ?? (parcial && body.cif === undefined ? undefined : null),
-      email: texto(body.email, { nombre: 'email', max: 200 }) ?? (parcial && body.email === undefined ? undefined : null),
+      cif: (cif ? cif.toUpperCase().replace(/[\s-]/g, '') : null) ?? (parcial && body.cif === undefined ? undefined : null),
+      email: email ?? (parcial && body.email === undefined ? undefined : null),
       telefono: texto(body.telefono, { nombre: 'telefono', max: 50 }) ?? (parcial && body.telefono === undefined ? undefined : null),
+      direccion: texto(body.direccion, { nombre: 'direccion', max: 300 }) ?? (parcial && body.direccion === undefined ? undefined : null),
       exige_pedido: booleano(body.exige_pedido) ?? (parcial ? undefined : 0),
       karve_id: texto(body.karve_id, { nombre: 'karve_id', max: 50 }) ?? (parcial && body.karve_id === undefined ? undefined : null),
       activo: booleano(body.activo),
     };
   }
 
+  // Un NIF/CIF no puede repetirse entre clientes (como en el ERP). `idPropio` excluye al que se edita.
+  function comprobarCifLibre(cif, idPropio = null) {
+    if (!cif) return;
+    const otro = db.prepare('SELECT id, nombre FROM clientes WHERE cif = ? AND id != ?').get(cif, idPropio || 0);
+    if (otro) throw new ErrorHttp(409, `Ya existe un cliente con el NIF/CIF ${cif}: "${otro.nombre}"`, { cliente_id: otro.id });
+  }
+
   r.post('/clientes', requierePermiso('clientes.gestionar'), (req, res) => {
     const c = leerCliente(req.body || {}, false);
-    const info = db.prepare('INSERT INTO clientes (nombre, cif, email, telefono, exige_pedido, karve_id) VALUES (?, ?, ?, ?, ?, ?)')
-      .run(c.nombre, c.cif, c.email, c.telefono, c.exige_pedido, c.karve_id);
+    comprobarCifLibre(c.cif);
+    const info = db.prepare('INSERT INTO clientes (nombre, cif, email, telefono, direccion, exige_pedido, karve_id, origen) VALUES (?, ?, ?, ?, ?, ?, ?, ?)')
+      .run(c.nombre, c.cif, c.email, c.telefono, c.direccion, c.exige_pedido, c.karve_id, 'manual');
     res.status(201).json(db.prepare('SELECT * FROM clientes WHERE id = ?').get(info.lastInsertRowid));
   });
 
+  // Edición parcial. Desactivar (baja lógica) = PUT { activo: false }; reactivar = PUT { activo: true }.
   r.put('/clientes/:id', requierePermiso('clientes.gestionar'), (req, res) => {
     const id = idRuta(req.params.id);
-    actualizarParcial('clientes', id, leerCliente(req.body || {}, true));
+    if (!db.prepare('SELECT 1 FROM clientes WHERE id = ?').get(id)) throw new ErrorHttp(404, 'Cliente no encontrado');
+    const c = leerCliente(req.body || {}, true);
+    if (c.cif) comprobarCifLibre(c.cif, id);
+    actualizarParcial('clientes', id, c);
     res.json(db.prepare('SELECT * FROM clientes WHERE id = ?').get(id));
   });
 

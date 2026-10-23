@@ -223,6 +223,8 @@ const VISTAS = {
   kanban: { titulo: 'Tablero', visible: () => puede('kanban.ver'), pintar: pintarKanban },
   misot: { titulo: 'Mis O.T.', visible: () => S.sesion.alcance === 'asignadas', pintar: pintarMisOT },
   listado: { titulo: 'Listado', visible: () => puede('ot.ver'), pintar: pintarListado },
+  // Maestro de clientes: roles de oficina con clientes.ver (admontaller, financiero, comercial, recambista); no en la tablet del técnico/SAT.
+  clientes: { titulo: 'Clientes', visible: () => puede('clientes.ver') && S.sesion.alcance !== 'asignadas', pintar: pintarClientes },
 };
 
 function vistaPorDefecto() {
@@ -544,6 +546,138 @@ function refrescarVista() {
   if (S.vista === 'kanban') { S.kanban.etag = null; cargarKanban(); }
   else if (S.vista === 'misot') pintarMisOT();
   else if (S.vista === 'listado') cargarListado();
+  else if (S.vista === 'clientes') cargarClientes();
+}
+
+// ---------------------------------------------------------------------------
+// Vista: Clientes (maestro). Espejo local de Karve a partir de la Fase 5: aquí se crean a mano.
+// ---------------------------------------------------------------------------
+function pintarClientes() {
+  const form = ref('filtros', app);
+  let temporizador = null;
+  form.onsubmit = (e) => { e.preventDefault(); cargarClientes(); };
+  form.elements.q.oninput = () => { clearTimeout(temporizador); temporizador = setTimeout(cargarClientes, 250); };
+  form.elements.todos.onchange = cargarClientes;
+  const nuevo = $('[data-accion="nuevo-cliente"]', app);
+  if (nuevo) nuevo.onclick = () => abrirCliente(null);
+  cargarClientes();
+}
+
+async function cargarClientes() {
+  const form = ref('filtros', app);
+  const filas = ref('filas', app);
+  if (!form || !filas) return;
+  const params = new URLSearchParams();
+  const q = form.elements.q.value.trim();
+  if (q) params.set('q', q);
+  if (form.elements.todos.value) params.set('todos', '1');
+  filas.classList.add('cargando');
+  try {
+    const clientes = await api(`/api/clientes?${params}`);
+    ref('contador', app).textContent = `${clientes.length} cliente${clientes.length === 1 ? '' : 's'}`;
+    filas.innerHTML = '';
+    if (!clientes.length) filas.innerHTML = '<tr><td colspan="6" class="vacio">Sin resultados</td></tr>';
+    for (const c of clientes) {
+      const tr = document.createElement('tr');
+      tr.dataset.id = c.id;
+      if (!c.activo) tr.classList.add('inactivo');
+      tr.innerHTML = `
+        <td class="num">${esc(c.nombre)}</td>
+        <td>${esc(c.cif || '')}</td>
+        <td>${esc(c.telefono || '')}</td>
+        <td>${esc(c.email || '')}</td>
+        <td>${chipOrigenCliente(c)}</td>
+        <td>${c.activo ? '<span class="chip chip-ok">Activo</span>' : '<span class="chip chip-claro">Desactivado</span>'}</td>`;
+      tr.onclick = () => abrirCliente(c.id);
+      filas.append(tr);
+    }
+  } catch (e) {
+    if (e.status !== 401) filas.innerHTML = `<tr><td colspan="6" class="vacio">${esc(e.message)}</td></tr>`;
+  } finally {
+    filas.classList.remove('cargando');
+  }
+}
+
+function chipOrigenCliente(c) {
+  if (c.origen === 'karve') return `<span class="chip chip-naranja" title="Sincronizado desde Karve${c.karve_id ? ' (' + esc(c.karve_id) + ')' : ''}">Karve</span>`;
+  return '<span class="chip chip-claro">Manual</span>';
+}
+
+// Modal de alta (id null) o edición de un cliente. Sin clientes.gestionar se abre en solo lectura.
+async function abrirCliente(id) {
+  let cliente = null;
+  if (id) {
+    try { cliente = await api(`/api/clientes/${id}`); } catch (e) { if (e.status !== 401) toast(e.message, 'error'); return; }
+  }
+  const nodo = tpl('tpl-cliente');
+  const form = ref('form', nodo);
+  const avisos = ref('avisos', nodo);
+  const guardar = ref('guardar', nodo);
+  const btnActivo = ref('desactivar', nodo);
+  const editable = puede('clientes.gestionar');
+  ref('titulo', nodo).textContent = cliente ? cliente.nombre : 'Nuevo cliente';
+  if (cliente) {
+    for (const campo of ['nombre', 'cif', 'telefono', 'email', 'direccion']) form.elements[campo].value = cliente[campo] || '';
+    form.elements.exige_pedido.checked = !!cliente.exige_pedido;
+    ref('meta', nodo).innerHTML = `
+      <div><span>Origen</span>${chipOrigenCliente(cliente)}</div>
+      <div><span>Código Karve</span>${esc(cliente.karve_id || '—')}</div>
+      <div><span>Máquinas</span>${(cliente.maquinas || []).length}</div>
+      <div><span>Alta</span>${esc(fecha(cliente.creado))}${cliente.activo ? '' : ' · <b>desactivado</b>'}</div>`;
+  } else {
+    ref('meta', nodo).classList.add('oculto');
+  }
+  if (!editable) {
+    for (const el of $$('input, textarea', form)) el.disabled = true;
+    guardar.classList.add('oculto');
+  }
+
+  if (cliente && editable) {
+    btnActivo.classList.remove('oculto');
+    btnActivo.textContent = cliente.activo ? 'Desactivar' : 'Reactivar';
+    btnActivo.classList.toggle('btn-peligro', !!cliente.activo);
+    btnActivo.onclick = async () => {
+      const activar = !cliente.activo;
+      if (!activar) {
+        const r = await elegir(`¿Desactivar a "${cliente.nombre}"? Sus máquinas, O.T. e historial se conservan.`, [{ etiqueta: 'Sí, desactivar', valor: 1, color: '#dc2626' }]);
+        if (!r) return;
+      }
+      btnActivo.disabled = true;
+      try {
+        await api(`/api/clientes/${cliente.id}`, { method: 'PUT', body: { activo: activar } });
+        toast(activar ? 'Cliente reactivado' : 'Cliente desactivado', 'ok');
+        cerrarModal(nodo);
+        refrescarVista();
+      } catch (e) {
+        mostrarErrorAccion(e, avisos);
+        btnActivo.disabled = false;
+      }
+    };
+  }
+
+  form.onsubmit = async (e) => {
+    e.preventDefault();
+    if (!editable) return;
+    guardar.disabled = true;
+    const v = (n) => form.elements[n].value.trim() || null;
+    const body = { nombre: v('nombre'), cif: v('cif'), telefono: v('telefono'), email: v('email'), direccion: v('direccion'), exige_pedido: form.elements.exige_pedido.checked };
+    try {
+      if (cliente) {
+        await api(`/api/clientes/${cliente.id}`, { method: 'PUT', body });
+        toast('Cliente guardado', 'ok');
+      } else {
+        const nuevo = await api('/api/clientes', { method: 'POST', body });
+        toast(`Cliente "${nuevo.nombre}" creado`, 'ok');
+      }
+      cerrarModal(nodo);
+      refrescarVista();
+    } catch (err) {
+      mostrarErrorAccion(err, avisos);
+    } finally {
+      guardar.disabled = false;
+    }
+  };
+  abrirModal(nodo);
 }
 
 // ---------------------------------------------------------------------------
