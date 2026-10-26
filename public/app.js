@@ -225,6 +225,8 @@ const VISTAS = {
   listado: { titulo: 'Listado', visible: () => puede('ot.ver'), pintar: pintarListado },
   // Maestro de clientes: roles de oficina con clientes.ver (admontaller, financiero, comercial, recambista); no en la tablet del técnico/SAT.
   clientes: { titulo: 'Clientes', visible: () => puede('clientes.ver') && S.sesion.alcance !== 'asignadas', pintar: pintarClientes },
+  maquinas: { titulo: 'Máquinas', visible: () => puede('maquinas.ver') && S.sesion.alcance !== 'asignadas', pintar: pintarMaquinas },
+  usuarios: { titulo: 'Usuarios', visible: () => puede('usuarios.gestionar'), pintar: pintarUsuarios },
 };
 
 function vistaPorDefecto() {
@@ -547,6 +549,8 @@ function refrescarVista() {
   else if (S.vista === 'misot') pintarMisOT();
   else if (S.vista === 'listado') cargarListado();
   else if (S.vista === 'clientes') cargarClientes();
+  else if (S.vista === 'maquinas') cargarMaquinas();
+  else if (S.vista === 'usuarios') cargarUsuarios();
 }
 
 // ---------------------------------------------------------------------------
@@ -586,7 +590,7 @@ async function cargarClientes() {
         <td>${esc(c.cif || '')}</td>
         <td>${esc(c.telefono || '')}</td>
         <td>${esc(c.email || '')}</td>
-        <td>${chipOrigenCliente(c)}</td>
+        <td>${chipOrigen(c)}</td>
         <td>${c.activo ? '<span class="chip chip-ok">Activo</span>' : '<span class="chip chip-claro">Desactivado</span>'}</td>`;
       tr.onclick = () => abrirCliente(c.id);
       filas.append(tr);
@@ -598,7 +602,8 @@ async function cargarClientes() {
   }
 }
 
-function chipOrigenCliente(c) {
+// Chip de procedencia de un cliente o una máquina (espejo de Karve en la Fase 5).
+function chipOrigen(c) {
   if (c.origen === 'karve') return `<span class="chip chip-naranja" title="Sincronizado desde Karve${c.karve_id ? ' (' + esc(c.karve_id) + ')' : ''}">Karve</span>`;
   return '<span class="chip chip-claro">Manual</span>';
 }
@@ -616,16 +621,42 @@ async function abrirCliente(id) {
   const btnActivo = ref('desactivar', nodo);
   const editable = puede('clientes.gestionar');
   ref('titulo', nodo).textContent = cliente ? cliente.nombre : 'Nuevo cliente';
+
+  // Máquinas del cliente: lista clicable (abre la ficha de la máquina) y alta directa con el cliente preseleccionado.
+  const pintarMaquinasCliente = () => {
+    const ul = ref('maquinas', nodo);
+    const lista = cliente.maquinas || [];
+    ul.innerHTML = lista.length ? '' : '<li class="nada">Sin máquinas</li>';
+    for (const m of lista) {
+      const li = document.createElement('li');
+      if (!m.activo) li.classList.add('inactivo');
+      const detalle = [m.bastidor, m.num_flota ? `flota ${m.num_flota}` : ''].filter(Boolean).join(' · ');
+      li.innerHTML = `<b>${esc(nombreMaquina(m))}</b><span class="suave">${esc(detalle)}</span>${m.activo ? chipOrigen(m) : '<span class="chip chip-claro">Desactivada</span>'}`;
+      li.onclick = () => abrirMaquina(m.id, { alGuardar: recargarMaquinasCliente });
+      ul.append(li);
+    }
+  };
+  const recargarMaquinasCliente = async () => {
+    try { cliente.maquinas = (await api(`/api/clientes/${cliente.id}`)).maquinas; pintarMaquinasCliente(); }
+    catch (e) { if (e.status !== 401) toast(e.message, 'error'); }
+  };
+
   if (cliente) {
     for (const campo of ['nombre', 'cif', 'telefono', 'email', 'direccion']) form.elements[campo].value = cliente[campo] || '';
     form.elements.exige_pedido.checked = !!cliente.exige_pedido;
     ref('meta', nodo).innerHTML = `
-      <div><span>Origen</span>${chipOrigenCliente(cliente)}</div>
+      <div><span>Origen</span>${chipOrigen(cliente)}</div>
       <div><span>Código Karve</span>${esc(cliente.karve_id || '—')}</div>
-      <div><span>Máquinas</span>${(cliente.maquinas || []).length}</div>
       <div><span>Alta</span>${esc(fecha(cliente.creado))}${cliente.activo ? '' : ' · <b>desactivado</b>'}</div>`;
+    pintarMaquinasCliente();
+    const btnMaquina = ref('nueva-maquina', nodo);
+    if (btnMaquina) {
+      if (!cliente.activo) btnMaquina.classList.add('oculto'); // a un cliente de baja no se le asignan máquinas
+      btnMaquina.onclick = () => abrirMaquina(null, { cliente, alGuardar: recargarMaquinasCliente });
+    }
   } else {
     ref('meta', nodo).classList.add('oculto');
+    ref('bloque-maquinas', nodo).classList.add('oculto');
   }
   if (!editable) {
     for (const el of $$('input, textarea', form)) el.disabled = true;
@@ -669,6 +700,329 @@ async function abrirCliente(id) {
         const nuevo = await api('/api/clientes', { method: 'POST', body });
         toast(`Cliente "${nuevo.nombre}" creado`, 'ok');
       }
+      cerrarModal(nodo);
+      refrescarVista();
+    } catch (err) {
+      mostrarErrorAccion(err, avisos);
+    } finally {
+      guardar.disabled = false;
+    }
+  };
+  abrirModal(nodo);
+}
+
+// ---------------------------------------------------------------------------
+// Vista: Máquinas (maestro). Mismo espejo de Karve que clientes; cada máquina pertenece a un cliente activo.
+// ---------------------------------------------------------------------------
+function nombreMaquina(m) {
+  return [m.marca, m.modelo].filter(Boolean).join(' ') || m.bastidor || (m.num_flota ? `Flota ${m.num_flota}` : 'Máquina sin datos');
+}
+
+function textoHoras(h) {
+  return h == null ? '' : `${Number(h).toLocaleString('es-ES', { maximumFractionDigits: 1 })} h`;
+}
+
+function pintarMaquinas() {
+  const form = ref('filtros', app);
+  let temporizador = null;
+  form.onsubmit = (e) => { e.preventDefault(); cargarMaquinas(); };
+  form.elements.q.oninput = () => { clearTimeout(temporizador); temporizador = setTimeout(cargarMaquinas, 250); };
+  form.elements.todos.onchange = cargarMaquinas;
+  const nueva = $('[data-accion="nueva-maquina"]', app);
+  if (nueva) nueva.onclick = () => abrirMaquina(null);
+  cargarMaquinas();
+}
+
+async function cargarMaquinas() {
+  const form = ref('filtros', app);
+  const filas = ref('filas', app);
+  if (!form || !filas) return;
+  const params = new URLSearchParams();
+  const q = form.elements.q.value.trim();
+  if (q) params.set('q', q);
+  if (form.elements.todos.value) params.set('todos', '1');
+  filas.classList.add('cargando');
+  try {
+    const maquinas = await api(`/api/maquinas?${params}`);
+    ref('contador', app).textContent = `${maquinas.length} máquina${maquinas.length === 1 ? '' : 's'}`;
+    filas.innerHTML = '';
+    if (!maquinas.length) filas.innerHTML = '<tr><td colspan="7" class="vacio">Sin resultados</td></tr>';
+    for (const m of maquinas) {
+      const tr = document.createElement('tr');
+      tr.dataset.id = m.id;
+      if (!m.activo) tr.classList.add('inactivo');
+      tr.innerHTML = `
+        <td class="num">${esc(nombreMaquina(m))}</td>
+        <td>${esc(m.bastidor || '')}</td>
+        <td>${esc(m.num_flota || '')}</td>
+        <td>${esc(m.cliente_nombre)}${m.cliente_activo ? '' : ' <span class="chip chip-claro" title="El cliente está desactivado">cliente de baja</span>'}</td>
+        <td class="suave">${esc(textoHoras(m.horometro_ultimo))}</td>
+        <td>${chipOrigen(m)}</td>
+        <td>${m.activo ? '<span class="chip chip-ok">Activa</span>' : '<span class="chip chip-claro">Desactivada</span>'}</td>`;
+      tr.onclick = () => abrirMaquina(m.id);
+      filas.append(tr);
+    }
+  } catch (e) {
+    if (e.status !== 401) filas.innerHTML = `<tr><td colspan="7" class="vacio">${esc(e.message)}</td></tr>`;
+  } finally {
+    filas.classList.remove('cargando');
+  }
+}
+
+// Modal de alta (id null) o edición de una máquina. Sin maquinas.gestionar se abre en solo lectura.
+// opciones.cliente preselecciona el propietario (alta desde la ficha del cliente); opciones.alGuardar se llama tras guardar o desactivar.
+async function abrirMaquina(id, { cliente = null, alGuardar = null } = {}) {
+  let maquina = null;
+  if (id) {
+    try { maquina = await api(`/api/maquinas/${id}`); } catch (e) { if (e.status !== 401) toast(e.message, 'error'); return; }
+  }
+  const nodo = tpl('tpl-maquina');
+  const form = ref('form', nodo);
+  const avisos = ref('avisos', nodo);
+  const guardar = ref('guardar', nodo);
+  const btnActivo = ref('desactivar', nodo);
+  const selClientes = ref('clientes', nodo);
+  const editable = puede('maquinas.gestionar');
+  ref('titulo', nodo).textContent = maquina ? nombreMaquina(maquina) : 'Nueva máquina';
+
+  // Selector de cliente: solo activos (a un cliente de baja no se le asignan máquinas). Si la máquina ya es de un
+  // cliente desactivado se muestra ese cliente marcado, para poder seguir editándola, pero no se puede elegir otro de baja.
+  let clientes = [];
+  let seleccionado = maquina ? String(maquina.cliente_id) : (cliente ? String(cliente.id) : '');
+  const pintarClientes = (filtro = '') => {
+    const f = filtro.trim().toLowerCase();
+    selClientes.innerHTML = '';
+    if (maquina && !maquina.cliente_activo) selClientes.insertAdjacentHTML('beforeend', `<option value="${maquina.cliente_id}">${esc(maquina.cliente_nombre)} · desactivado</option>`);
+    for (const c of clientes) {
+      if (f && !c.nombre.toLowerCase().includes(f) && !(c.cif || '').toLowerCase().includes(f)) continue;
+      selClientes.insertAdjacentHTML('beforeend', `<option value="${c.id}">${esc(c.nombre)}${c.cif ? ' · ' + esc(c.cif) : ''}</option>`);
+    }
+    if (seleccionado && $(`option[value="${seleccionado}"]`, selClientes)) selClientes.value = seleccionado;
+  };
+  try { clientes = await api('/api/clientes'); } catch (e) { mostrarErrorAccion(e, avisos); }
+  pintarClientes();
+  ref('buscar-cliente', nodo).oninput = (e) => pintarClientes(e.target.value);
+  selClientes.onchange = () => { seleccionado = selClientes.value; };
+
+  if (maquina) {
+    for (const campo of ['marca', 'modelo', 'bastidor', 'num_flota', 'observaciones']) form.elements[campo].value = maquina[campo] || '';
+    form.elements.horometro_ultimo.value = maquina.horometro_ultimo == null ? '' : maquina.horometro_ultimo;
+    ref('meta', nodo).innerHTML = `
+      <div><span>Origen</span>${chipOrigen(maquina)}</div>
+      <div><span>Código Karve</span>${esc(maquina.karve_id || '—')}</div>
+      <div><span>O.T.</span>${maquina.num_ot}</div>
+      <div><span>Alta</span>${esc(fecha(maquina.creado))}${maquina.activo ? '' : ' · <b>desactivada</b>'}</div>`;
+  } else {
+    ref('meta', nodo).classList.add('oculto');
+  }
+  if (!editable) {
+    for (const el of $$('input, select, textarea', form)) el.disabled = true;
+    guardar.classList.add('oculto');
+  }
+
+  if (maquina && editable) {
+    btnActivo.classList.remove('oculto');
+    btnActivo.textContent = maquina.activo ? 'Desactivar' : 'Reactivar';
+    btnActivo.classList.toggle('btn-peligro', !!maquina.activo);
+    btnActivo.onclick = async () => {
+      const activar = !maquina.activo;
+      if (!activar) {
+        const r = await elegir(`¿Desactivar la máquina "${nombreMaquina(maquina)}"? Sus O.T. e historial se conservan.`, [{ etiqueta: 'Sí, desactivar', valor: 1, color: '#dc2626' }]);
+        if (!r) return;
+      }
+      btnActivo.disabled = true;
+      try {
+        await api(`/api/maquinas/${maquina.id}`, { method: 'PUT', body: { activo: activar } });
+        toast(activar ? 'Máquina reactivada' : 'Máquina desactivada', 'ok');
+        cerrarModal(nodo);
+        refrescarVista();
+        if (alGuardar) alGuardar();
+      } catch (e) {
+        mostrarErrorAccion(e, avisos);
+        btnActivo.disabled = false;
+      }
+    };
+  }
+
+  form.onsubmit = async (e) => {
+    e.preventDefault();
+    if (!editable) return;
+    const clienteId = Number(selClientes.value);
+    if (!clienteId) { aviso(avisos, 'Elige el cliente propietario', 'error'); return; }
+    guardar.disabled = true;
+    const v = (n) => form.elements[n].value.trim() || null;
+    const body = { marca: v('marca'), modelo: v('modelo'), bastidor: v('bastidor'), num_flota: v('num_flota'), horometro_ultimo: v('horometro_ultimo'), observaciones: v('observaciones') };
+    // cliente_id solo si cambia: así se edita una máquina cuyo cliente ya está de baja sin que la API lo rechace.
+    if (!maquina || clienteId !== maquina.cliente_id) body.cliente_id = clienteId;
+    try {
+      if (maquina) {
+        await api(`/api/maquinas/${maquina.id}`, { method: 'PUT', body });
+        toast('Máquina guardada', 'ok');
+      } else {
+        const nueva = await api('/api/maquinas', { method: 'POST', body });
+        toast(`Máquina "${nombreMaquina(nueva)}" creada`, 'ok');
+      }
+      cerrarModal(nodo);
+      refrescarVista();
+      if (alGuardar) alGuardar();
+    } catch (err) {
+      mostrarErrorAccion(err, avisos);
+    } finally {
+      guardar.disabled = false;
+    }
+  };
+  abrirModal(nodo);
+}
+
+// ---------------------------------------------------------------------------
+// Vista: Usuarios (solo usuarios.gestionar). El acceso es propio de la app; karve_id enlaza con el operario de Karve (Fase 5).
+// ---------------------------------------------------------------------------
+const GRUPOS_ROL = {
+  tecnico: { etiqueta: 'Técnico interno', clase: 'chip-naranja' },
+  sat:     { etiqueta: 'SAT externo',     clase: 'chip-azul' },
+  oficina: { etiqueta: 'Oficina',         clase: 'chip-claro' },
+};
+
+async function cargarRoles() {
+  if (!S.roles) S.roles = (await api('/api/usuarios')).roles;
+  return S.roles;
+}
+
+function rolDe(codigo) {
+  return (S.roles || []).find((r) => r.codigo === codigo) || { codigo, nombre: codigo, grupo: 'oficina' };
+}
+
+// Chip del grupo (Técnico interno / SAT externo / Oficina); los de oficina llevan al lado el nombre del rol concreto.
+function chipRol(codigo) {
+  const r = rolDe(codigo);
+  const g = GRUPOS_ROL[r.grupo] || GRUPOS_ROL.oficina;
+  return `<span class="chip ${g.clase}" title="${esc(r.nombre)}">${g.etiqueta}</span>${r.grupo === 'oficina' ? `<span class="rol-nombre">${esc(r.nombre)}</span>` : ''}`;
+}
+
+function pintarUsuarios() {
+  const form = ref('filtros', app);
+  let temporizador = null;
+  form.onsubmit = (e) => { e.preventDefault(); cargarUsuarios(); };
+  form.elements.q.oninput = () => { clearTimeout(temporizador); temporizador = setTimeout(cargarUsuarios, 250); };
+  form.elements.todos.onchange = cargarUsuarios;
+  const nuevo = $('[data-accion="nuevo-usuario"]', app);
+  if (nuevo) nuevo.onclick = () => abrirUsuario(null);
+  cargarUsuarios();
+}
+
+async function cargarUsuarios() {
+  const form = ref('filtros', app);
+  const filas = ref('filas', app);
+  if (!form || !filas) return;
+  const params = new URLSearchParams();
+  const q = form.elements.q.value.trim();
+  if (q) params.set('q', q);
+  if (form.elements.todos.value) params.set('todos', '1');
+  filas.classList.add('cargando');
+  try {
+    const { roles, usuarios } = await api(`/api/usuarios?${params}`);
+    S.roles = roles;
+    ref('contador', app).textContent = `${usuarios.length} usuario${usuarios.length === 1 ? '' : 's'}`;
+    filas.innerHTML = '';
+    if (!usuarios.length) filas.innerHTML = '<tr><td colspan="6" class="vacio">Sin resultados</td></tr>';
+    for (const u of usuarios) {
+      const tr = document.createElement('tr');
+      tr.dataset.id = u.id;
+      if (!u.activo) tr.classList.add('inactivo');
+      tr.innerHTML = `
+        <td class="num">${esc(u.usuario)}${u.id === S.sesion.usuario.id ? ' <span class="chip chip-claro" title="Tu sesión">tú</span>' : ''}</td>
+        <td>${esc(u.nombre)}</td>
+        <td>${chipRol(u.rol)}</td>
+        <td>${esc(u.email || '')}</td>
+        <td class="suave">${esc(u.karve_id || '')}</td>
+        <td>${u.activo ? '<span class="chip chip-ok">Activo</span>' : '<span class="chip chip-claro">Desactivado</span>'}</td>`;
+      tr.onclick = () => abrirUsuario(u.id);
+      filas.append(tr);
+    }
+  } catch (e) {
+    if (e.status !== 401) filas.innerHTML = `<tr><td colspan="6" class="vacio">${esc(e.message)}</td></tr>`;
+  } finally {
+    filas.classList.remove('cargando');
+  }
+}
+
+// Modal de alta (id null) o edición de un usuario. Contraseña obligatoria al crear; al editar, en blanco = no cambiarla.
+// El propio usuario no puede desactivarse ni cambiarse el rol (la API también lo impide).
+async function abrirUsuario(id) {
+  let usuario = null;
+  try {
+    await cargarRoles();
+    if (id) usuario = await api(`/api/usuarios/${id}`);
+  } catch (e) { if (e.status !== 401) toast(e.message, 'error'); return; }
+  const nodo = tpl('tpl-usuario');
+  const form = ref('form', nodo);
+  const avisos = ref('avisos', nodo);
+  const guardar = ref('guardar', nodo);
+  const btnActivo = ref('desactivar', nodo);
+  const selRol = ref('roles', nodo);
+  const soyYo = !!usuario && usuario.id === S.sesion.usuario.id;
+  ref('titulo', nodo).textContent = usuario ? usuario.nombre : 'Nuevo usuario';
+  for (const r of S.roles) selRol.insertAdjacentHTML('beforeend', `<option value="${esc(r.codigo)}">${esc(r.nombre)}</option>`);
+
+  if (usuario) {
+    for (const campo of ['usuario', 'nombre', 'email', 'karve_id']) form.elements[campo].value = usuario[campo] || '';
+    selRol.value = usuario.rol;
+    form.elements.clave.placeholder = 'En blanco: no cambia';
+    ref('etiqueta-clave', nodo).textContent = 'Nueva contraseña (solo si quieres cambiarla)';
+    ref('meta', nodo).innerHTML = `
+      <div><span>Rol</span>${chipRol(usuario.rol)}</div>
+      <div><span>O.T. asignadas</span>${usuario.num_ot}</div>
+      <div><span>Último acceso</span>${usuario.ultimo_acceso ? esc(fecha(usuario.ultimo_acceso)) : 'nunca'}</div>
+      <div><span>Alta</span>${esc(fecha(usuario.creado))}${usuario.activo ? '' : ' · <b>desactivado</b>'}</div>`;
+    if (soyYo) { selRol.disabled = true; selRol.title = 'No puedes cambiar tu propio rol'; }
+  } else {
+    form.elements.clave.required = true;
+    selRol.value = 'tecnico';
+    ref('meta', nodo).classList.add('oculto');
+  }
+
+  if (usuario && !soyYo) {
+    btnActivo.classList.remove('oculto');
+    btnActivo.textContent = usuario.activo ? 'Desactivar' : 'Reactivar';
+    btnActivo.classList.toggle('btn-peligro', !!usuario.activo);
+    btnActivo.onclick = async () => {
+      const activar = !usuario.activo;
+      if (!activar) {
+        const r = await elegir(`¿Desactivar a "${usuario.nombre}"? No podrá entrar; sus O.T. e historial se conservan.`, [{ etiqueta: 'Sí, desactivar', valor: 1, color: '#dc2626' }]);
+        if (!r) return;
+      }
+      btnActivo.disabled = true;
+      try {
+        await api(`/api/usuarios/${usuario.id}`, { method: 'PUT', body: { activo: activar } });
+        S.tecnicos = null;
+        toast(activar ? 'Usuario reactivado' : 'Usuario desactivado: ya no puede entrar', 'ok');
+        cerrarModal(nodo);
+        refrescarVista();
+      } catch (e) {
+        mostrarErrorAccion(e, avisos);
+        btnActivo.disabled = false;
+      }
+    };
+  }
+
+  form.onsubmit = async (e) => {
+    e.preventDefault();
+    guardar.disabled = true;
+    const v = (n) => form.elements[n].value.trim() || null;
+    const body = { usuario: v('usuario'), nombre: v('nombre'), email: v('email'), karve_id: v('karve_id') };
+    if (!soyYo) body.rol = selRol.value;
+    const clave = form.elements.clave.value;
+    if (clave) body.clave = clave;
+    try {
+      if (usuario) {
+        await api(`/api/usuarios/${usuario.id}`, { method: 'PUT', body });
+        toast(clave ? 'Usuario guardado y contraseña cambiada' : 'Usuario guardado', 'ok');
+        if (soyYo) { S.sesion.usuario.nombre = body.nombre; $('#usuario-nombre').textContent = body.nombre; }
+      } else {
+        const nuevo = await api('/api/usuarios', { method: 'POST', body });
+        toast(`Usuario "${nuevo.usuario}" creado`, 'ok');
+      }
+      S.tecnicos = null;
       cerrarModal(nodo);
       refrescarVista();
     } catch (err) {

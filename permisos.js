@@ -14,13 +14,14 @@
 //   asignadas        → solo las O.T. en las que es el técnico asignado
 //   clientes_propios → solo las O.T. de sus clientes (relación vendedor↔cliente, pendiente de Karve)
 // ---------------------------------------------------------------------------
+// `grupo` agrupa los roles en la pantalla de usuarios: tecnico (interno) | sat (externo) | oficina (el resto).
 const ROLES = {
-  admontaller: { nombre: 'Admontaller / Responsable', alcance: 'todo',             descripcion: 'Control total: Kanban, planificación, asignaciones, usuarios' },
-  tecnico:     { nombre: 'Técnico / Operario',        alcance: 'asignadas',        descripcion: 'Tablet: sus O.T., tiempos, checklist, fotos, firma' },
-  sat:         { nombre: 'SAT externo',               alcance: 'asignadas',        descripcion: 'Operario externo: solo sus asignaciones' },
-  recambista:  { nombre: 'Recambista / Almacén',      alcance: 'todo',             descripcion: 'Entrada de material y repuestos por O.T.' },
-  financiero:  { nombre: 'Financiero / Administración', alcance: 'todo',           descripcion: 'Facturación, albaranes, Nº de pedido, visto bueno factura' },
-  comercial:   { nombre: 'Comercial / Vendedor',      alcance: 'clientes_propios', descripcion: 'Solo lectura del estado de las O.T. de sus clientes' },
+  admontaller: { nombre: 'Admontaller / Responsable', alcance: 'todo',             grupo: 'oficina', descripcion: 'Control total: Kanban, planificación, asignaciones, usuarios' },
+  tecnico:     { nombre: 'Técnico / Operario',        alcance: 'asignadas',        grupo: 'tecnico', descripcion: 'Tablet: sus O.T., tiempos, checklist, fotos, firma' },
+  sat:         { nombre: 'SAT externo',               alcance: 'asignadas',        grupo: 'sat',     descripcion: 'Operario externo: solo sus asignaciones' },
+  recambista:  { nombre: 'Recambista / Almacén',      alcance: 'todo',             grupo: 'oficina', descripcion: 'Entrada de material y repuestos por O.T.' },
+  financiero:  { nombre: 'Financiero / Administración', alcance: 'todo',           grupo: 'oficina', descripcion: 'Facturación, albaranes, Nº de pedido, visto bueno factura' },
+  comercial:   { nombre: 'Comercial / Vendedor',      alcance: 'clientes_propios', grupo: 'oficina', descripcion: 'Solo lectura del estado de las O.T. de sus clientes' },
 };
 
 // ---------------------------------------------------------------------------

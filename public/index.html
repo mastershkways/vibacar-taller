@@ -85,6 +85,40 @@
 
 <!-- ============================================================ Modales -->
 
+<template id="tpl-maquinas">
+  <div class="barra-vista">
+    <h2>Máquinas</h2>
+    <span class="contador" data-ref="contador"></span>
+    <button class="btn btn-primario" data-accion="nueva-maquina" data-permiso="maquinas.gestionar">+ Nueva máquina</button>
+  </div>
+  <form class="filtros" data-ref="filtros">
+    <div class="ancho"><label>Buscar</label><input type="search" name="q" placeholder="Marca, modelo, bastidor, nº de flota, cliente o código Karve" autocomplete="off"></div>
+    <div><label>Mostrar</label><select name="todos"><option value="">Activas</option><option value="1">Todas</option></select></div>
+  </form>
+  <div class="tabla-envoltorio">
+    <table class="tabla">
+      <thead><tr><th>Máquina</th><th>Bastidor</th><th>Nº flota</th><th>Cliente</th><th>Horas</th><th>Origen</th><th>Estado</th></tr></thead>
+      <tbody data-ref="filas"></tbody>
+    </table>
+  </div>
+</template>
+<template id="tpl-usuarios">
+  <div class="barra-vista">
+    <h2>Usuarios</h2>
+    <span class="contador" data-ref="contador"></span>
+    <button class="btn btn-primario" data-accion="nuevo-usuario" data-permiso="usuarios.gestionar">+ Nuevo usuario</button>
+  </div>
+  <form class="filtros" data-ref="filtros">
+    <div class="ancho"><label>Buscar</label><input type="search" name="q" placeholder="Usuario, nombre, email o código Karve" autocomplete="off"></div>
+    <div><label>Mostrar</label><select name="todos"><option value="">Activos</option><option value="1">Todos</option></select></div>
+  </form>
+  <div class="tabla-envoltorio">
+    <table class="tabla">
+      <thead><tr><th>Usuario</th><th>Nombre</th><th>Rol</th><th>Email</th><th>Código Karve</th><th>Estado</th></tr></thead>
+      <tbody data-ref="filas"></tbody>
+    </table>
+  </div>
+</template>
 <template id="tpl-detalle">
   <div class="modal-fondo">
     <div class="modal">
@@ -221,6 +255,10 @@
           <textarea name="direccion" rows="2" maxlength="300"></textarea>
           <label class="check"><input type="checkbox" name="exige_pedido"> Exige nº de pedido antes de facturar</label>
           <div class="datos separado" data-ref="meta"></div>
+          <div class="separado" data-ref="bloque-maquinas">
+            <div class="subtitulo"><span>Máquinas</span><button class="btn btn-pequeno" type="button" data-ref="nueva-maquina" data-permiso="maquinas.gestionar">+ Máquina</button></div>
+            <ul class="lista-compacta" data-ref="maquinas"></ul>
+          </div>
           <div class="acciones">
             <button class="btn btn-primario" type="submit" data-ref="guardar">Guardar</button>
             <button class="btn" type="button" data-accion="cerrar">Cancelar</button>
@@ -232,6 +270,77 @@
   </div>
 </template>
 
+<template id="tpl-maquina">
+  <div class="modal-fondo">
+    <div class="modal estrecho">
+      <div class="modal-cabecera">
+        <h2 data-ref="titulo"></h2>
+        <button class="cerrar" type="button" data-accion="cerrar" aria-label="Cerrar">×</button>
+      </div>
+      <div class="modal-cuerpo">
+        <div class="aviso aviso-info" data-ref="aviso-karve">La sincronización con Karve se habilitará en la Fase 5. Hasta entonces las máquinas se dan de alta a mano.</div>
+        <div data-ref="avisos"></div>
+        <form data-ref="form">
+          <label>Cliente propietario</label>
+          <input type="search" data-ref="buscar-cliente" placeholder="Escribe para filtrar… (solo clientes activos)" autocomplete="off">
+          <select name="cliente_id" data-ref="clientes" size="4" class="separado" required></select>
+          <div class="fila">
+            <div><label>Marca</label><input type="text" name="marca" maxlength="100" autocomplete="off"></div>
+            <div><label>Modelo</label><input type="text" name="modelo" maxlength="100" autocomplete="off"></div>
+          </div>
+          <div class="fila">
+            <div><label>Bastidor / nº de serie</label><input type="text" name="bastidor" maxlength="100" autocomplete="off" class="mayusculas"></div>
+            <div><label>Nº de flota (del cliente)</label><input type="text" name="num_flota" maxlength="50" autocomplete="off"></div>
+          </div>
+          <label>Horas de máquina (último horómetro)</label>
+          <input type="number" name="horometro_ultimo" min="0" step="0.1" inputmode="decimal" autocomplete="off">
+          <label>Observaciones</label>
+          <textarea name="observaciones" rows="3" maxlength="2000" placeholder="Ubicación habitual, accesorios, particularidades…"></textarea>
+          <div class="datos separado" data-ref="meta"></div>
+          <div class="acciones">
+            <button class="btn btn-primario" type="submit" data-ref="guardar">Guardar</button>
+            <button class="btn" type="button" data-accion="cerrar">Cancelar</button>
+            <button class="btn btn-peligro derecha oculto" type="button" data-ref="desactivar">Desactivar</button>
+          </div>
+        </form>
+      </div>
+    </div>
+  </div>
+</template>
+<template id="tpl-usuario">
+  <div class="modal-fondo">
+    <div class="modal estrecho">
+      <div class="modal-cabecera">
+        <h2 data-ref="titulo"></h2>
+        <button class="cerrar" type="button" data-accion="cerrar" aria-label="Cerrar">×</button>
+      </div>
+      <div class="modal-cuerpo">
+        <div class="aviso aviso-info">El acceso (usuario, contraseña y rol) es propio de esta aplicación. El código de operario enlaza con su ficha en Karve para imputar horas en la Fase 5.</div>
+        <div data-ref="avisos"></div>
+        <form data-ref="form" autocomplete="off">
+          <div class="fila">
+            <div><label>Usuario (login)</label><input type="text" name="usuario" maxlength="40" required pattern="[A-Za-z0-9._\-]{3,40}" title="3-40 caracteres: letras, números, punto, guion o guion bajo" autocomplete="off"></div>
+            <div><label>Rol</label><select name="rol" data-ref="roles" required></select></div>
+          </div>
+          <label>Nombre completo</label>
+          <input type="text" name="nombre" maxlength="120" required autocomplete="off">
+          <div class="fila">
+            <div><label>Email</label><input type="email" name="email" maxlength="200" autocomplete="off"></div>
+            <div><label>Código de operario en Karve</label><input type="text" name="karve_id" maxlength="40" placeholder="Opcional, recomendado" autocomplete="off"></div>
+          </div>
+          <label data-ref="etiqueta-clave">Contraseña</label>
+          <input type="password" name="clave" minlength="6" maxlength="200" autocomplete="new-password">
+          <div class="datos separado" data-ref="meta"></div>
+          <div class="acciones">
+            <button class="btn btn-primario" type="submit" data-ref="guardar">Guardar</button>
+            <button class="btn" type="button" data-accion="cerrar">Cancelar</button>
+            <button class="btn btn-peligro derecha oculto" type="button" data-ref="desactivar">Desactivar</button>
+          </div>
+        </form>
+      </div>
+    </div>
+  </div>
+</template>
 <template id="tpl-parte">
   <div class="modal-fondo">
     <div class="modal estrecho">

@@ -213,6 +213,9 @@ const COLUMNAS_NUEVAS = [
   // origen = manual (creado aquí) | karve (sincronizado; karve_id es su código en Karve).
   ['clientes', 'direccion', 'TEXT'],
   ['clientes', 'origen', "TEXT NOT NULL DEFAULT 'manual'"],
+  // Fase 2 (F2-03): maestro de máquinas, mismo espejo de Karve que clientes (origen + karve_id).
+  ['maquinas', 'origen', "TEXT NOT NULL DEFAULT 'manual'"],
+  ['maquinas', 'observaciones', 'TEXT'],
 ];
 
 function asegurarColumna(tabla, columna, definicion) {

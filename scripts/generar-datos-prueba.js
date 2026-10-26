@@ -24,13 +24,15 @@ const CLAVE_PRUEBA = 'prueba123';
 // ---------------------------------------------------------------------------
 // Datos ficticios
 // ---------------------------------------------------------------------------
+// [usuario, nombre, rol, email, karve_id (código de operario en Karve, F2-04), activo]
 const USUARIOS = [
-  ['tecnico1',   'Mikel Etxeberria',  'tecnico',    'mikel@vibacar-pruebas.local'],
-  ['tecnico2',   'Ane Zubiaurre',     'tecnico',    'ane@vibacar-pruebas.local'],
-  ['sat1',       'SAT Bizkaia (ext.)','sat',        'sat@vibacar-pruebas.local'],
-  ['recambista1','Jon Arrieta',       'recambista', 'jon@vibacar-pruebas.local'],
-  ['finanzas1',  'Leire Mendizabal',  'financiero', 'leire@vibacar-pruebas.local'],
-  ['comercial1', 'Iker Goikoetxea',   'comercial',  'iker@vibacar-pruebas.local'],
+  ['tecnico1',   'Mikel Etxeberria',  'tecnico',    'mikel@vibacar-pruebas.local', 'OP012', 1],
+  ['tecnico2',   'Ane Zubiaurre',     'tecnico',    'ane@vibacar-pruebas.local',   'OP017', 1],
+  ['tecnico3',   'Unai Larrañaga',    'tecnico',    'unai@vibacar-pruebas.local',  'OP009', 0], // se marchó: desactivado, sin O.T.
+  ['sat1',       'SAT Bizkaia (ext.)','sat',        'sat@vibacar-pruebas.local',   'OP031', 1],
+  ['recambista1','Jon Arrieta',       'recambista', 'jon@vibacar-pruebas.local',   null,    1],
+  ['finanzas1',  'Leire Mendizabal',  'financiero', 'leire@vibacar-pruebas.local', null,    1],
+  ['comercial1', 'Iker Goikoetxea',   'comercial',  'iker@vibacar-pruebas.local',  null,    1],
 ];
 
 // [nombre, cif, email, telefono, direccion, exige_pedido, origen, karve_id, activo]
@@ -64,6 +66,14 @@ const MAQUINAS = {
   10: [['Hitachi', 'ZX350LC-6', 'HCM1ZX350K00123', null, 10300]],
   11: [],
 };
+// Observaciones de algunas máquinas (por bastidor) y máquinas desactivadas (baja lógica).
+const OBSERVACIONES = {
+  VCEC220EK00312345: 'Trabaja en la cantera de Mañaria; acceso por pista, avisar antes de ir.',
+  W09LTM1050001234: 'Grúa con revisión de equipo en marzo. El cliente pide siempre técnico con carné de gruista.',
+  HYSH16XM001234: 'Carretilla en el muelle AZ-1; acceso al puerto de 7 a 19 h con acreditación.',
+  KBCZ0801234567: 'Martillo hidráulico propio del cliente montado. Máquina vendida en 2026; queda de baja.',
+};
+const MAQUINAS_INACTIVAS = new Set(['KBCZ0801234567']);
 
 // O.T.: [cliente, maquina (índice dentro del cliente o null), estado final, prioridad, tipo, origen, sintoma, descripcion, notas_internas, técnico (0/1 = tecnico1/2, 2 = sat1, null), días de antigüedad, extras]
 // extras: { via: estados intermedios no estándar } | { propuesta: true } (propuesta de técnico pendiente de aprobar)
@@ -154,13 +164,15 @@ const generar = db.transaction(() => {
 
   // Usuarios de prueba (solo los que falten)
   const usuarioPor = {};
-  const insUsuario = db.prepare('INSERT INTO usuarios (usuario, nombre, clave_hash, rol, email) VALUES (?, ?, ?, ?, ?)');
-  for (const [usuario, nombre, rol, email] of USUARIOS) {
-    let u = db.prepare('SELECT id, nombre, rol FROM usuarios WHERE usuario = ?').get(usuario);
+  const insUsuario = db.prepare('INSERT INTO usuarios (usuario, nombre, clave_hash, rol, email, karve_id, activo) VALUES (?, ?, ?, ?, ?, ?, ?)');
+  for (const [usuario, nombre, rol, email, karveId, activo] of USUARIOS) {
+    let u = db.prepare('SELECT id, nombre, rol, karve_id FROM usuarios WHERE usuario = ?').get(usuario);
     if (!u) {
-      const info = insUsuario.run(usuario, nombre, hashClave(CLAVE_PRUEBA), rol, email);
+      const info = insUsuario.run(usuario, nombre, hashClave(CLAVE_PRUEBA), rol, email, karveId, activo);
       u = { id: info.lastInsertRowid, nombre, rol };
-      resumen.usuariosCreados.push(`${usuario} (${rol})`);
+      resumen.usuariosCreados.push(`${usuario} (${rol}${activo ? '' : ', desactivado'})`);
+    } else if (karveId && !u.karve_id) {
+      db.prepare('UPDATE usuarios SET karve_id = ? WHERE id = ?').run(karveId, u.id); // F2-04: código de operario a los ya creados
     }
     usuarioPor[usuario] = u;
   }
@@ -181,7 +193,7 @@ const generar = db.transaction(() => {
   });
 
   // Máquinas
-  const insMaquina = db.prepare('INSERT INTO maquinas (cliente_id, marca, modelo, bastidor, num_flota, horometro_ultimo, karve_id, creado) VALUES (?, ?, ?, ?, ?, ?, ?, ?)');
+  const insMaquina = db.prepare('INSERT INTO maquinas (cliente_id, marca, modelo, bastidor, num_flota, horometro_ultimo, karve_id, origen, observaciones, activo, creado) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)');
   const maquinaIds = {};
   for (const [idx, lista] of Object.entries(MAQUINAS)) {
     maquinaIds[idx] = [];
@@ -190,7 +202,7 @@ const generar = db.transaction(() => {
       const existente = db.prepare('SELECT id FROM maquinas WHERE bastidor = ?').get(bastidor);
       if (existente) { maquinaIds[idx].push(existente.id); return; }
       const karveId = cliente[6] === 'karve' ? `M${String(100 + Number(idx) * 10 + j).padStart(6, '0')}` : null;
-      const info = insMaquina.run(clienteIds[idx], marca, modelo, bastidor, flota, horas, karveId, fmt(fechaHace(55 - Number(idx) * 3, 10, j * 11)));
+      const info = insMaquina.run(clienteIds[idx], marca, modelo, bastidor, flota, horas, karveId, karveId ? 'karve' : 'manual', OBSERVACIONES[bastidor] || null, MAQUINAS_INACTIVAS.has(bastidor) ? 0 : 1, fmt(fechaHace(55 - Number(idx) * 3, 10, j * 11)));
       maquinaIds[idx].push(info.lastInsertRowid);
       resumen.maquinas++;
     });
