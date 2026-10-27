@@ -5,7 +5,7 @@
 
 const express = require('express');
 const { db, ahora, hashClave } = require('./db');
-const { requierePermiso, esRolValido, ROLES } = require('./permisos');
+const { requierePermiso, esRolValido, alcanceDe, ROLES } = require('./permisos');
 const { ErrorHttp, texto, entero, booleano, idRuta } = require('./validar');
 
 // UPDATE parcial: solo las columnas presentes en `cambios` (valor undefined = no tocar).
@@ -26,25 +26,38 @@ module.exports = function montarRutasMaestros(app) {
   // -------------------------------------------------------------------------
   // Clientes — espejo local del maestro de Karve (Fase 5). Baja lógica con `activo`;
   // `origen` (manual | karve) y `karve_id` los fijará la sincronización, no la API.
+  // F2-05: `comercial_id` = comercial responsable (cartera). El alcance `clientes_propios` (rol comercial)
+  // solo deja ver los clientes de su cartera, sus máquinas y sus O.T. (rutas-ot.js); fuera de alcance = 404.
   // -------------------------------------------------------------------------
+  const soloMisClientes = (req) => alcanceDe(req.usuario.rol) === 'clientes_propios';
+  const COLUMNAS_CLIENTE = 'c.*, v.nombre AS comercial_nombre';
+  const leerClienteBD = (id) => db.prepare(`SELECT ${COLUMNAS_CLIENTE} FROM clientes c LEFT JOIN usuarios v ON v.id = c.comercial_id WHERE c.id = ?`).get(id);
+
   r.get('/clientes', requierePermiso('clientes.ver'), (req, res) => {
     const q = texto(req.query.q, { nombre: 'q', max: 100 });
     const todos = req.query.todos === '1';
-    let sql = 'SELECT * FROM clientes WHERE 1 = 1';
+    let sql = `SELECT ${COLUMNAS_CLIENTE} FROM clientes c LEFT JOIN usuarios v ON v.id = c.comercial_id WHERE 1 = 1`;
     const p = [];
-    if (!todos) sql += ' AND activo = 1';
+    if (!todos) sql += ' AND c.activo = 1';
+    if (soloMisClientes(req)) { sql += ' AND c.comercial_id = ?'; p.push(req.usuario.id); }
     if (q) {
-      sql += ' AND (nombre LIKE ? OR cif LIKE ? OR karve_id LIKE ? OR email LIKE ? OR telefono LIKE ?)';
+      sql += ' AND (c.nombre LIKE ? OR c.cif LIKE ? OR c.karve_id LIKE ? OR c.email LIKE ? OR c.telefono LIKE ?)';
       p.push(`%${q}%`, `%${q}%`, `%${q}%`, `%${q}%`, `%${q}%`);
     }
-    sql += ' ORDER BY activo DESC, nombre COLLATE NOCASE LIMIT 500';
+    sql += ' ORDER BY c.activo DESC, c.nombre COLLATE NOCASE LIMIT 500';
     res.json(db.prepare(sql).all(...p));
+  });
+
+  // Comerciales activos (comercial o jefe comercial), para el selector "Comercial responsable" de la ficha del cliente.
+  const ROLES_COMERCIALES = ['comercial', 'comercial_jefe'];
+  r.get('/comerciales', requierePermiso('clientes.gestionar'), (req, res) => {
+    res.json(db.prepare(`SELECT id, nombre FROM usuarios WHERE activo = 1 AND rol IN ('comercial', 'comercial_jefe') ORDER BY nombre COLLATE NOCASE`).all());
   });
 
   r.get('/clientes/:id', requierePermiso('clientes.ver'), (req, res) => {
     const id = idRuta(req.params.id);
-    const cliente = db.prepare('SELECT * FROM clientes WHERE id = ?').get(id);
-    if (!cliente) throw new ErrorHttp(404, 'Cliente no encontrado');
+    const cliente = leerClienteBD(id);
+    if (!cliente || (soloMisClientes(req) && cliente.comercial_id !== req.usuario.id)) throw new ErrorHttp(404, 'Cliente no encontrado');
     const maquinas = db.prepare('SELECT * FROM maquinas WHERE cliente_id = ? ORDER BY activo DESC, marca, modelo').all(id);
     res.json({ ...cliente, maquinas });
   });
@@ -53,8 +66,15 @@ module.exports = function montarRutasMaestros(app) {
     const email = texto(body.email, { nombre: 'email', max: 200 });
     if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) throw new ErrorHttp(400, 'El email no tiene un formato válido');
     const cif = texto(body.cif, { nombre: 'cif', max: 20 });
+    const comercialId = entero(body.comercial_id, { nombre: 'comercial_id', min: 1 });
+    if (comercialId) {
+      const v = db.prepare('SELECT id, rol, activo FROM usuarios WHERE id = ?').get(comercialId);
+      if (!v || !ROLES_COMERCIALES.includes(v.rol)) throw new ErrorHttp(400, 'El comercial responsable debe ser un usuario con rol comercial');
+      if (!v.activo) throw new ErrorHttp(400, 'El comercial responsable está desactivado');
+    }
     return {
       nombre: texto(body.nombre, { nombre: 'nombre', obligatorio: !parcial, max: 200 }) ?? undefined,
+      comercial_id: comercialId ?? (parcial && body.comercial_id === undefined ? undefined : null),
       cif: (cif ? cif.toUpperCase().replace(/[\s-]/g, '') : null) ?? (parcial && body.cif === undefined ? undefined : null),
       email: email ?? (parcial && body.email === undefined ? undefined : null),
       telefono: texto(body.telefono, { nombre: 'telefono', max: 50 }) ?? (parcial && body.telefono === undefined ? undefined : null),
@@ -75,9 +95,9 @@ module.exports = function montarRutasMaestros(app) {
   r.post('/clientes', requierePermiso('clientes.gestionar'), (req, res) => {
     const c = leerCliente(req.body || {}, false);
     comprobarCifLibre(c.cif);
-    const info = db.prepare('INSERT INTO clientes (nombre, cif, email, telefono, direccion, exige_pedido, karve_id, origen) VALUES (?, ?, ?, ?, ?, ?, ?, ?)')
-      .run(c.nombre, c.cif, c.email, c.telefono, c.direccion, c.exige_pedido, c.karve_id, 'manual');
-    res.status(201).json(db.prepare('SELECT * FROM clientes WHERE id = ?').get(info.lastInsertRowid));
+    const info = db.prepare('INSERT INTO clientes (nombre, cif, email, telefono, direccion, exige_pedido, karve_id, comercial_id, origen) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)')
+      .run(c.nombre, c.cif, c.email, c.telefono, c.direccion, c.exige_pedido, c.karve_id, c.comercial_id, 'manual');
+    res.status(201).json(leerClienteBD(info.lastInsertRowid));
   });
 
   // Edición parcial. Desactivar (baja lógica) = PUT { activo: false }; reactivar = PUT { activo: true }.
@@ -87,7 +107,7 @@ module.exports = function montarRutasMaestros(app) {
     const c = leerCliente(req.body || {}, true);
     if (c.cif) comprobarCifLibre(c.cif, id);
     actualizarParcial('clientes', id, c);
-    res.json(db.prepare('SELECT * FROM clientes WHERE id = ?').get(id));
+    res.json(leerClienteBD(id));
   });
 
   // -------------------------------------------------------------------------
@@ -95,7 +115,7 @@ module.exports = function montarRutasMaestros(app) {
   // `activo`; `origen` (manual | karve) y `karve_id` los fijará la sincronización, no la API.
   // Cada máquina pertenece a un cliente, y solo se asigna (o se cambia) a un cliente activo.
   // -------------------------------------------------------------------------
-  const COLUMNAS_MAQUINA = `m.*, c.nombre AS cliente_nombre, c.activo AS cliente_activo,
+  const COLUMNAS_MAQUINA = `m.*, c.nombre AS cliente_nombre, c.activo AS cliente_activo, c.comercial_id AS cliente_comercial_id,
     (SELECT COUNT(*) FROM ot o WHERE o.maquina_id = m.id) AS num_ot`;
   const leerMaquinaBD = (id) => db.prepare(`SELECT ${COLUMNAS_MAQUINA} FROM maquinas m JOIN clientes c ON c.id = m.cliente_id WHERE m.id = ?`).get(id);
 
@@ -106,6 +126,7 @@ module.exports = function montarRutasMaestros(app) {
     let sql = `SELECT ${COLUMNAS_MAQUINA} FROM maquinas m JOIN clientes c ON c.id = m.cliente_id WHERE 1 = 1`;
     const p = [];
     if (!todos) sql += ' AND m.activo = 1';
+    if (soloMisClientes(req)) { sql += ' AND c.comercial_id = ?'; p.push(req.usuario.id); }
     if (clienteId) { sql += ' AND m.cliente_id = ?'; p.push(clienteId); }
     if (q) {
       sql += ' AND (m.marca LIKE ? OR m.modelo LIKE ? OR m.bastidor LIKE ? OR m.num_flota LIKE ? OR m.karve_id LIKE ? OR c.nombre LIKE ?)';
@@ -117,7 +138,7 @@ module.exports = function montarRutasMaestros(app) {
 
   r.get('/maquinas/:id', requierePermiso('maquinas.ver'), (req, res) => {
     const m = leerMaquinaBD(idRuta(req.params.id));
-    if (!m) throw new ErrorHttp(404, 'Máquina no encontrada');
+    if (!m || (soloMisClientes(req) && m.cliente_comercial_id !== req.usuario.id)) throw new ErrorHttp(404, 'Máquina no encontrada');
     res.json(m);
   });
 

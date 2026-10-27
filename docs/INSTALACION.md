@@ -77,6 +77,7 @@ Para parar: `Ctrl+C`. Tras cambiar cualquier `.js` de la raíz hay que reiniciar
 4. Crea los clientes en la pestaña "Clientes" (o el primero directamente desde "+ Nueva O.T.", que también permite el alta rápida de cliente y máquina). Los clientes no se borran: se desactivan desde su ficha.
 5. Las máquinas, en la pestaña "Máquinas" o desde la ficha de su cliente (botón "+ Máquina"). Solo se asignan a clientes activos; el bastidor no puede repetirse. También se desactivan en vez de borrarse.
 6. El personal, en la pestaña "Usuarios" (solo administradores): usuario, nombre, email, rol, código de operario en Karve y contraseña. Al editar, la contraseña en blanco no se toca; escribir una nueva la cambia. Desactivar a alguien bloquea su acceso al instante (y cierra su sesión) sin borrar sus O.T.; nadie puede desactivarse ni cambiarse el rol a sí mismo.
+7. Cada cliente puede tener un "Comercial responsable" (selector en su ficha, solo usuarios activos con rol comercial). Un usuario con rol comercial solo ve los clientes de su cartera, sus máquinas y sus O.T., en el Listado y en el Tablero; el resto le da "no encontrado". Quien no tenga cartera no ve nada hasta que se le asigne. El rol "Jefe comercial" tiene los mismos permisos pero ve todos los clientes.
 
 Tras 10 intentos fallidos de contraseña, un usuario queda bloqueado 15 minutos.
 
@@ -88,7 +89,7 @@ Desde la consola, en la carpeta del proyecto:
 node scripts/crear-usuario.js jperez tecnico "Juan Pérez" jperez@vibacar.com
 ```
 
-La contraseña se pide por teclado sin mostrarla. Roles válidos: `admontaller`, `tecnico`, `sat`, `recambista`, `financiero`, `comercial` (`node scripts/crear-usuario.js --roles` los describe). Para cambiar una contraseña:
+La contraseña se pide por teclado sin mostrarla. Roles válidos: `admontaller`, `tecnico`, `sat`, `recambista`, `financiero`, `comercial`, `comercial_jefe` (`node scripts/crear-usuario.js --roles` los describe). Para cambiar una contraseña:
 
 ```
 node scripts/crear-usuario.js jperez --clave
@@ -143,7 +144,7 @@ Para ver la interfaz con datos sin tener que crearlos a mano:
 node scripts/generar-datos-prueba.js
 ```
 
-Crea usuarios de prueba de todos los roles (`tecnico1`, `tecnico2`, `sat1`, `recambista1`, `finanzas1`, `comercial1`, más `tecnico3` desactivado; los técnicos con código de operario en Karve; la contraseña se muestra al terminar), 12 clientes (manuales y "de Karve", dos desactivados), sus máquinas y 20 O.T. repartidas por todas las columnas del Tablero, con historial y asignaciones. Se niega a ejecutarse si ya hay datos: `--limpiar` borra antes todas las O.T., máquinas y clientes (no los usuarios) y `--anadir` añade otra tanda. Respeta la numeración (sigue el contador) y no hace falta reiniciar el servidor. **Solo para bases de desarrollo o pruebas.**
+Crea usuarios de prueba de todos los roles (`tecnico1`, `tecnico2`, `sat1`, `recambista1`, `finanzas1`, `comercial1`, `jefeventas1`, más `tecnico3` desactivado; los técnicos con código de operario en Karve; la contraseña se muestra al terminar), 12 clientes (manuales y "de Karve", dos desactivados; dos en la cartera de `comercial1`), sus máquinas y 20 O.T. repartidas por todas las columnas del Tablero, con historial y asignaciones. Se niega a ejecutarse si ya hay datos: `--limpiar` borra antes todas las O.T., máquinas y clientes (no los usuarios) y `--anadir` añade otra tanda. Respeta la numeración (sigue el contador) y no hace falta reiniciar el servidor. **Solo para bases de desarrollo o pruebas.**
 
 ## 12. Estructura de archivos
 

@@ -77,7 +77,7 @@
   </form>
   <div class="tabla-envoltorio">
     <table class="tabla">
-      <thead><tr><th>Razón social</th><th>NIF/CIF</th><th>Teléfono</th><th>Email</th><th>Origen</th><th>Estado</th></tr></thead>
+      <thead><tr><th>Razón social</th><th>NIF/CIF</th><th>Teléfono</th><th>Email</th><th>Comercial</th><th>Origen</th><th>Estado</th></tr></thead>
       <tbody data-ref="filas"></tbody>
     </table>
   </div>
@@ -254,6 +254,8 @@
           <label>Dirección</label>
           <textarea name="direccion" rows="2" maxlength="300"></textarea>
           <label class="check"><input type="checkbox" name="exige_pedido"> Exige nº de pedido antes de facturar</label>
+          <label>Comercial responsable</label>
+          <select name="comercial_id" data-ref="comerciales"><option value="">— Sin comercial —</option></select>
           <div class="datos separado" data-ref="meta"></div>
           <div class="separado" data-ref="bloque-maquinas">
             <div class="subtitulo"><span>Máquinas</span><button class="btn btn-pequeno" type="button" data-ref="nueva-maquina" data-permiso="maquinas.gestionar">+ Máquina</button></div>

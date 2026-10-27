@@ -22,6 +22,8 @@ const ROLES = {
   recambista:  { nombre: 'Recambista / Almacén',      alcance: 'todo',             grupo: 'oficina', descripcion: 'Entrada de material y repuestos por O.T.' },
   financiero:  { nombre: 'Financiero / Administración', alcance: 'todo',           grupo: 'oficina', descripcion: 'Facturación, albaranes, Nº de pedido, visto bueno factura' },
   comercial:   { nombre: 'Comercial / Vendedor',      alcance: 'clientes_propios', grupo: 'oficina', descripcion: 'Solo lectura del estado de las O.T. de sus clientes' },
+  // F2-05: jefe de ventas. Mismos permisos que comercial, pero ve los clientes y O.T. de todos los comerciales (y los sin comercial).
+  comercial_jefe: { nombre: 'Jefe comercial',         alcance: 'todo',             grupo: 'oficina', descripcion: 'Solo lectura del estado de las O.T. de todos los clientes' },
 };
 
 // ---------------------------------------------------------------------------
@@ -85,6 +87,10 @@ const MATRIZ = {
   ],
 
   comercial: [
+    'ot.ver', 'clientes.ver', 'maquinas.ver', 'kanban.ver',
+  ],
+
+  comercial_jefe: [
     'ot.ver', 'clientes.ver', 'maquinas.ver', 'kanban.ver',
   ],
 };

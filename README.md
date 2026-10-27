@@ -9,7 +9,7 @@ Aplicación web para gestionar las **Órdenes de Trabajo (O.T.)** de reparación
 - **Vista para tablet** del técnico: solo ve sus O.T. asignadas, registra tiempos, checklist, fotos y firma del cliente.
 - **Recambios**: el almacén vincula los repuestos usados a cada O.T.
 - **Cierre y facturación**: parte de trabajo, albarán y reclamación automática del nº de pedido al cliente cuando lo exige.
-- **Clientes**: ficha con razón social, NIF/CIF, email, teléfono y dirección; buscador rápido; los clientes no se borran, se desactivan.
+- **Clientes**: ficha con razón social, NIF/CIF, email, teléfono, dirección y comercial responsable; buscador rápido; los clientes no se borran, se desactivan.
 - **Máquinas**: ficha con marca, modelo, bastidor, nº de flota, horas y observaciones, siempre de un cliente activo; buscador por cualquiera de esos datos o por cliente; desde la ficha del cliente se ven y se dan de alta sus máquinas. Tampoco se borran: se desactivan.
 - **Usuarios**: el administrador da de alta al personal (técnicos internos, SAT externos y oficina) con su usuario, rol y contraseña, y puede cambiarla o desactivar a quien se marcha sin perder su historial. Cada técnico lleva su código de operario en Karve para imputar horas más adelante.
 - **Integración con Karve** (el ERP) para inventario, clientes, máquinas y numeración. Hasta que llegue, los clientes y las máquinas se dan de alta a mano y la pantalla indica si cada uno es manual o viene de Karve.
@@ -23,7 +23,8 @@ Aplicación web para gestionar las **Órdenes de Trabajo (O.T.)** de reparación
 | Técnico / Operario | Sus O.T. en la tablet |
 | Recambista / Almacén | Entrada de material y repuestos por O.T. |
 | Financiero / Administración | Facturación, albaranes, nº de pedido |
-| Comercial | Estado de las O.T. de sus clientes (solo lectura) |
+| Comercial | Estado de las O.T. de los clientes de su cartera (solo lectura): solo ve esos clientes, sus máquinas y sus O.T., también en el Tablero |
+| Jefe comercial | Lo mismo que el comercial, pero de todos los clientes (los de cualquier comercial y los que no tienen) |
 | SAT externo | Solo sus asignaciones |
 
 ## Cómo se usa
@@ -45,4 +46,4 @@ La base de datos se crea sola en `.cache/datos.db` la primera vez.
 
 ## Estado del proyecto
 
-En desarrollo. **Fase 1 completada** (octubre de 2026): acceso con usuarios y roles, base de datos, API de O.T. y maestros, y la interfaz con Tablero, vista de tablet y listado. **Fase 2 en curso**: rediseño visual hecho y pantallas de Clientes, Máquinas y Usuarios; sigue la relación vendedor-cliente. El plan por fases está en `contexto/PLAN.md` (archivo local, no versionado).
+En desarrollo. **Fase 1 completada** (octubre de 2026): acceso con usuarios y roles, base de datos, API de O.T. y maestros, y la interfaz con Tablero, vista de tablet y listado. **Fase 2 en curso**: rediseño visual hecho y pantallas de Clientes, Máquinas y Usuarios, y cartera de clientes por comercial; sigue la carga inicial de maestros. El plan por fases está en `contexto/PLAN.md` (archivo local, no versionado).

@@ -580,7 +580,7 @@ async function cargarClientes() {
     const clientes = await api(`/api/clientes?${params}`);
     ref('contador', app).textContent = `${clientes.length} cliente${clientes.length === 1 ? '' : 's'}`;
     filas.innerHTML = '';
-    if (!clientes.length) filas.innerHTML = '<tr><td colspan="6" class="vacio">Sin resultados</td></tr>';
+    if (!clientes.length) filas.innerHTML = '<tr><td colspan="7" class="vacio">Sin resultados</td></tr>';
     for (const c of clientes) {
       const tr = document.createElement('tr');
       tr.dataset.id = c.id;
@@ -590,13 +590,14 @@ async function cargarClientes() {
         <td>${esc(c.cif || '')}</td>
         <td>${esc(c.telefono || '')}</td>
         <td>${esc(c.email || '')}</td>
+        <td class="suave">${esc(c.comercial_nombre || '')}</td>
         <td>${chipOrigen(c)}</td>
         <td>${c.activo ? '<span class="chip chip-ok">Activo</span>' : '<span class="chip chip-claro">Desactivado</span>'}</td>`;
       tr.onclick = () => abrirCliente(c.id);
       filas.append(tr);
     }
   } catch (e) {
-    if (e.status !== 401) filas.innerHTML = `<tr><td colspan="6" class="vacio">${esc(e.message)}</td></tr>`;
+    if (e.status !== 401) filas.innerHTML = `<tr><td colspan="7" class="vacio">${esc(e.message)}</td></tr>`;
   } finally {
     filas.classList.remove('cargando');
   }
@@ -621,6 +622,18 @@ async function abrirCliente(id) {
   const btnActivo = ref('desactivar', nodo);
   const editable = puede('clientes.gestionar');
   ref('titulo', nodo).textContent = cliente ? cliente.nombre : 'Nuevo cliente';
+
+  // Comercial responsable (F2-05): solo comerciales activos; si el del cliente ya está de baja se muestra marcado.
+  const selComercial = ref('comerciales', nodo);
+  if (editable) {
+    try {
+      for (const v of await api('/api/comerciales')) selComercial.insertAdjacentHTML('beforeend', `<option value="${v.id}">${esc(v.nombre)}</option>`);
+    } catch (e) { mostrarErrorAccion(e, avisos); }
+  }
+  if (cliente && cliente.comercial_id && !$(`option[value="${cliente.comercial_id}"]`, selComercial)) {
+    selComercial.insertAdjacentHTML('beforeend', `<option value="${cliente.comercial_id}">${esc(cliente.comercial_nombre || 'Comercial')}${editable ? ' · desactivado' : ''}</option>`);
+  }
+  if (cliente) selComercial.value = cliente.comercial_id ? String(cliente.comercial_id) : '';
 
   // Máquinas del cliente: lista clicable (abre la ficha de la máquina) y alta directa con el cliente preseleccionado.
   const pintarMaquinasCliente = () => {
@@ -659,7 +672,7 @@ async function abrirCliente(id) {
     ref('bloque-maquinas', nodo).classList.add('oculto');
   }
   if (!editable) {
-    for (const el of $$('input, textarea', form)) el.disabled = true;
+    for (const el of $$('input, select, textarea', form)) el.disabled = true;
     guardar.classList.add('oculto');
   }
 
@@ -691,7 +704,7 @@ async function abrirCliente(id) {
     if (!editable) return;
     guardar.disabled = true;
     const v = (n) => form.elements[n].value.trim() || null;
-    const body = { nombre: v('nombre'), cif: v('cif'), telefono: v('telefono'), email: v('email'), direccion: v('direccion'), exige_pedido: form.elements.exige_pedido.checked };
+    const body = { nombre: v('nombre'), cif: v('cif'), telefono: v('telefono'), email: v('email'), direccion: v('direccion'), exige_pedido: form.elements.exige_pedido.checked, comercial_id: selComercial.value ? Number(selComercial.value) : null };
     try {
       if (cliente) {
         await api(`/api/clientes/${cliente.id}`, { method: 'PUT', body });

@@ -2,7 +2,7 @@
 // optimista, cambio de estado validado por transiciones, historial, asignaciones y Kanban.
 //
 // Reglas que se aplican SIEMPRE en el servidor:
-//   - alcance del rol (permisos.js): técnico/SAT solo ven sus O.T.; comercial, sus clientes (pendiente de Karve).
+//   - alcance del rol (permisos.js): técnico/SAT solo ven sus O.T.; comercial, las de los clientes de su cartera (clientes.comercial_id).
 //   - cada cambio de estado pasa por la tabla `transiciones` (origen, destino, rol) y escribe en `ot_historial`.
 //   - cualquier UPDATE sobre `ot` incrementa `version`; el PUT exige la version que vio el cliente (409 si no coincide).
 
@@ -79,8 +79,8 @@ function filtroAlcance(req) {
     case 'asignadas':
       return { sql: ' AND o.tecnico_id = ?', params: [req.usuario.id] };
     case 'clientes_propios':
-      // Pendiente (Fase 2/5): relación vendedor ↔ cliente desde Karve. En el prototipo, comercial ve todas.
-      return { sql: '', params: [] };
+      // F2-05: el comercial solo ve las O.T. de los clientes de su cartera (clientes.comercial_id = él).
+      return { sql: ' AND o.cliente_id IN (SELECT id FROM clientes WHERE comercial_id = ?)', params: [req.usuario.id] };
     default:
       return { sql: '', params: [] };
   }
@@ -227,7 +227,7 @@ module.exports = function montarRutasOT(app) {
     const f = filtroAlcance(req);
     const base = `FROM ot o JOIN estados e ON e.codigo = o.estado JOIN fases fa ON fa.codigo = e.fase WHERE fa.abierta = 1 AND e.activo = 1${f.sql}`;
     const firma = db.prepare(`SELECT COUNT(*) AS n, COALESCE(SUM(o.version), 0) AS v, COALESCE(MAX(COALESCE(o.actualizado, o.creado)), '') AS m ${base}`).get(...f.params);
-    const etag = `"${crypto.createHash('sha1').update(`${firma.n}|${firma.v}|${firma.m}|${req.usuario.rol}`).digest('hex').slice(0, 20)}"`;
+    const etag = `"${crypto.createHash('sha1').update(`${firma.n}|${firma.v}|${firma.m}|${req.usuario.rol}|${req.usuario.id}`).digest('hex').slice(0, 20)}"`;
     if (req.headers['if-none-match'] === etag) return res.status(304).end();
 
     const fases = db.prepare('SELECT codigo, nombre, orden FROM fases WHERE abierta = 1 ORDER BY orden').all();

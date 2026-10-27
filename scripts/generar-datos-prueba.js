@@ -33,6 +33,7 @@ const USUARIOS = [
   ['recambista1','Jon Arrieta',       'recambista', 'jon@vibacar-pruebas.local',   null,    1],
   ['finanzas1',  'Leire Mendizabal',  'financiero', 'leire@vibacar-pruebas.local', null,    1],
   ['comercial1', 'Iker Goikoetxea',   'comercial',  'iker@vibacar-pruebas.local',  null,    1],
+  ['jefeventas1','Nerea Olabarria',    'comercial_jefe', 'nerea@vibacar-pruebas.local', null, 1], // F2-05: ve la cartera de todos
 ];
 
 // [nombre, cif, email, telefono, direccion, exige_pedido, origen, karve_id, activo]
@@ -191,6 +192,8 @@ const generar = db.transaction(() => {
     clienteIds.push(info.lastInsertRowid);
     resumen.clientes++;
   });
+  // F2-05: cartera del comercial de prueba: Áridos Ibaizabal y Grúas Lezama (tienen O.T. en varias fases)
+  db.prepare('UPDATE clientes SET comercial_id = ? WHERE id IN (?, ?)').run(usuarioPor.comercial1.id, clienteIds[1], clienteIds[3]);
 
   // Máquinas
   const insMaquina = db.prepare('INSERT INTO maquinas (cliente_id, marca, modelo, bastidor, num_flota, horometro_ultimo, karve_id, origen, observaciones, activo, creado) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)');
