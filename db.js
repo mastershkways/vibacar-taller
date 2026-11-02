@@ -215,6 +215,15 @@ const COLUMNAS_NUEVAS = [
   ['clientes', 'origen', "TEXT NOT NULL DEFAULT 'manual'"],
   // Fase 2 (F2-05): comercial responsable del cliente (cartera del vendedor); el alcance clientes_propios filtra por él.
   ['clientes', 'comercial_id', 'INTEGER REFERENCES usuarios(id)'],
+  // Fase 3 (F3-03): contactos del cliente y fecha de la última factura (vendrá de Karve en la Fase 3.5; regla de 3 años).
+  // `origen` y `activo` se conservan en BD pero ya no se gestionan desde la interfaz.
+  ['clientes', 'compras_nombre', 'TEXT'],
+  ['clientes', 'compras_telefono', 'TEXT'],
+  ['clientes', 'tecnico_nombre', 'TEXT'],
+  ['clientes', 'tecnico_telefono', 'TEXT'],
+  ['clientes', 'tecnico_email', 'TEXT'],
+  ['clientes', 'email_facturas', 'TEXT'],
+  ['clientes', 'ultima_factura', 'TEXT'],
   // Fase 2 (F2-03): maestro de máquinas, mismo espejo de Karve que clientes (origen + karve_id).
   ['maquinas', 'origen', "TEXT NOT NULL DEFAULT 'manual'"],
   ['maquinas', 'observaciones', 'TEXT'],

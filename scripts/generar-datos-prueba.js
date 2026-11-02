@@ -48,9 +48,25 @@ const CLIENTES = [
   ['Canteras Arratia SA',                'A48777888', 'cantera@arratia.example',     '946 730 050', 'Barrio Urkizu s/n\n48140 Igorre',                     1, 'karve',  'C000152', 1],
   ['Forestal Gorbeia SL',                'B95888999', 'forestal@gorbeia.example',    '946 311 222', 'Zeanuri bidea 9\n48144 Zeanuri',                      0, 'manual', null,      1],
   ['Logística Portuaria Zierbena SA',    'A48999000', 'mantenimiento@zierbena.example', '946 364 700', 'Muelle AZ-1, Puerto de Bilbao\n48508 Zierbena',   0, 'karve',  'C000406', 1],
-  ['Demoliciones Txorierri SL',          'B48111222', 'info@txorierri.example',      '944 530 400', 'Polígono Larrondo 2\n48180 Loiu',                     0, 'manual', null,      0],
-  ['Maquinaria Usada Berriz SL',         'B48333444', 'ventas@berriz.example',       '946 826 900', 'Polígono Eitua 20\n48240 Berriz',                     0, 'karve',  'C000019', 0],
+  ['Demoliciones Txorierri SL',          'B48111222', 'info@txorierri.example',      '944 530 400', 'Polígono Larrondo 2\n48180 Loiu',                     0, 'manual', null,      1],
+  ['Maquinaria Usada Berriz SL',         'B48333444', 'ventas@berriz.example',       '946 826 900', 'Polígono Eitua 20\n48240 Berriz',                     0, 'karve',  'C000019', 1],
 ];
+// F3-03: contactos y última factura por CIF. [compras_nombre, compras_telefono, tecnico_nombre, tecnico_telefono, tecnico_email, email_facturas, días desde la última factura (null = sin factura)]
+// Txorierri y Berriz llevan más de 3 años sin factura: son los "antiguos" (no salen en el listado por defecto).
+const CONTACTOS = {
+  B95123456: ['Amaia Garaio', '944 101 203', 'Koldo Etxebarria', '688 101 204', 'taller@garaio.example', 'facturas@garaio.example', 45],
+  A48123457: ['Nerea Uriarte', '946 300 151', 'Julen Aranburu', '677 300 152', 'mantenimiento@ibaizabal.example', 'proveedores@ibaizabal.example', 12],
+  B48987654: ['Iñaki Urkiola', '946 812 341', 'Iñaki Urkiola', '699 812 342', 'taller@urkiola.example', 'taller@urkiola.example', 120],
+  B95345678: ['Maite Lezama', '944 555 011', 'Gorka Lezama', '666 555 012', 'gruas@lezama.example', 'administracion@lezama.example', 30],
+  A95222333: ['Compras Mendibil', '944 780 901', 'Asier Mendibil', '655 780 902', 'maquinaria@mendibil.example', 'facturas@mendibil.example', 200],
+  B48555666: ['Eneko Nerbioi', '946 720 112', 'Eneko Nerbioi', '644 720 113', 'obras@nerbioi.example', 'obras@nerbioi.example', 400],
+  B01234567: ['Leire Lautada', '945 280 601', 'Ander Lautada', '633 280 602', 'planta@lautada.example', 'contabilidad@lautada.example', 15],
+  A48777888: ['Compras Arratia', '946 730 051', 'Unai Arratia', '622 730 052', 'cantera@arratia.example', 'facturas@arratia.example', 90],
+  B95888999: ['Jon Gorbeia', '946 311 223', 'Jon Gorbeia', '611 311 224', 'forestal@gorbeia.example', 'forestal@gorbeia.example', null],
+  A48999000: ['Compras Zierbena', '946 364 701', 'Mikel Zierbena', '600 364 702', 'mantenimiento@zierbena.example', 'facturacion@zierbena.example', 7],
+  B48111222: ['Txomin Txorierri', '944 530 401', 'Txomin Txorierri', '699 530 402', 'info@txorierri.example', 'info@txorierri.example', 1500],
+  B48333444: ['Ventas Berriz', '946 826 901', 'Patxi Berriz', '688 826 902', 'ventas@berriz.example', 'ventas@berriz.example', 1300],
+};
 
 // Máquinas por cliente (índice en CLIENTES): [marca, modelo, bastidor, num_flota, horometro]
 const MAQUINAS = {
@@ -192,6 +208,9 @@ const generar = db.transaction(() => {
     clienteIds.push(info.lastInsertRowid);
     resumen.clientes++;
   });
+  // F3-03: contactos y última factura (también a los clientes que ya existían); los dos antiguos vuelven a activo = 1
+  const updContactos = db.prepare('UPDATE clientes SET compras_nombre = ?, compras_telefono = ?, tecnico_nombre = ?, tecnico_telefono = ?, tecnico_email = ?, email_facturas = ?, ultima_factura = ?, activo = 1 WHERE cif = ?');
+  for (const [cif, c] of Object.entries(CONTACTOS)) updContactos.run(c[0], c[1], c[2], c[3], c[4], c[5], c[6] == null ? null : fmt(fechaHace(c[6], 10)).slice(0, 10), cif);
   // F2-05: cartera del comercial de prueba: Áridos Ibaizabal y Grúas Lezama (tienen O.T. en varias fases)
   db.prepare('UPDATE clientes SET comercial_id = ? WHERE id IN (?, ?)').run(usuarioPor.comercial1.id, clienteIds[1], clienteIds[3]);
 

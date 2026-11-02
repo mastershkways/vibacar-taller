@@ -224,8 +224,8 @@ const VISTAS = {
   misot: { titulo: 'Mis O.T.', visible: () => S.sesion.alcance === 'asignadas', pintar: pintarMisOT },
   listado: { titulo: 'Listado', visible: () => puede('ot.ver'), pintar: pintarListado },
   // Maestro de clientes: roles de oficina con clientes.ver (admontaller, financiero, comercial, recambista); no en la tablet del técnico/SAT.
-  clientes: { titulo: 'Clientes', visible: () => puede('clientes.ver') && S.sesion.alcance !== 'asignadas', pintar: pintarClientes },
-  maquinas: { titulo: 'Máquinas', visible: () => puede('maquinas.ver') && S.sesion.alcance !== 'asignadas', pintar: pintarMaquinas },
+  clientes: { titulo: 'Clientes', grupo: 'Maestros', visible: () => puede('clientes.ver') && S.sesion.alcance !== 'asignadas', pintar: pintarClientes },
+  maquinas: { titulo: 'Máquinas', grupo: 'Maestros', visible: () => puede('maquinas.ver') && S.sesion.alcance !== 'asignadas', pintar: pintarMaquinas },
   usuarios: { titulo: 'Usuarios', visible: () => puede('usuarios.gestionar'), pintar: pintarUsuarios },
 };
 
@@ -240,22 +240,56 @@ function pintarCabecera() {
   $('#usuario-rol').textContent = S.sesion.rol;
   const nav = $('#nav');
   nav.innerHTML = '';
-  for (const [nombre, v] of Object.entries(VISTAS)) {
-    if (!v.visible()) continue;
+  const menus = new Map();
+  const botonVista = (nombre, titulo) => {
     const b = document.createElement('button');
     b.type = 'button';
     b.dataset.vista = nombre;
-    b.textContent = v.titulo;
-    b.onclick = () => { location.hash = nombre; };
-    nav.append(b);
+    b.textContent = titulo;
+    b.onclick = () => { cerrarMenus(); location.hash = nombre; };
+    return b;
+  };
+  for (const [nombre, v] of Object.entries(VISTAS)) {
+    if (!v.visible()) continue;
+    if (!v.grupo) { nav.append(botonVista(nombre, v.titulo)); continue; }
+    // Vistas agrupadas (F3-02): un desplegable por grupo, p. ej. "Maestros" con Clientes y Máquinas.
+    if (!menus.has(v.grupo)) {
+      const menu = document.createElement('div');
+      menu.className = 'menu';
+      menu.dataset.grupo = v.grupo;
+      menu.innerHTML = `<button type="button" class="menu-boton" aria-haspopup="true" aria-expanded="false">${esc(v.grupo)} <span class="flecha">▾</span></button><div class="menu-lista" role="menu"></div>`;
+      $('.menu-boton', menu).onclick = (e) => { e.stopPropagation(); alternarMenu(menu); };
+      nav.append(menu);
+      menus.set(v.grupo, menu);
+    }
+    $('.menu-lista', menus.get(v.grupo)).append(botonVista(nombre, v.titulo));
   }
 }
+
+// Desplegables de la cabecera: la lista va en position:fixed para que el scroll horizontal del nav no la recorte.
+function alternarMenu(menu) {
+  const abrir = !menu.classList.contains('abierto');
+  cerrarMenus();
+  if (!abrir) return;
+  menu.classList.add('abierto');
+  $('.menu-boton', menu).setAttribute('aria-expanded', 'true');
+  const r = $('.menu-boton', menu).getBoundingClientRect();
+  const lista = $('.menu-lista', menu);
+  lista.style.left = `${Math.round(r.left)}px`;
+  lista.style.top = `${Math.round(r.bottom + 6)}px`;
+}
+function cerrarMenus() {
+  for (const m of $$('#nav .menu.abierto')) { m.classList.remove('abierto'); $('.menu-boton', m).setAttribute('aria-expanded', 'false'); }
+}
+document.addEventListener('click', (e) => { if (!e.target.closest('#nav .menu')) cerrarMenus(); });
+document.addEventListener('keydown', (e) => { if (e.key === 'Escape') cerrarMenus(); });
 
 function mostrarVista(nombre) {
   if (!VISTAS[nombre] || !VISTAS[nombre].visible()) nombre = vistaPorDefecto();
   pararPolling();
   S.vista = nombre;
-  for (const b of $$('#nav button')) b.classList.toggle('activo', b.dataset.vista === nombre);
+  for (const b of $$('#nav button[data-vista]')) b.classList.toggle('activo', b.dataset.vista === nombre);
+  for (const m of $$('#nav .menu')) m.classList.toggle('activo', !!$(`button[data-vista="${nombre}"]`, m));
   app.innerHTML = '';
   // Las plantillas de vista tienen varios hijos de primer nivel: se clona el fragmento entero.
   app.append(document.getElementById(`tpl-${nombre}`).content.cloneNode(true));
@@ -580,36 +614,31 @@ async function cargarClientes() {
     const clientes = await api(`/api/clientes?${params}`);
     ref('contador', app).textContent = `${clientes.length} cliente${clientes.length === 1 ? '' : 's'}`;
     filas.innerHTML = '';
-    if (!clientes.length) filas.innerHTML = '<tr><td colspan="7" class="vacio">Sin resultados</td></tr>';
+    if (!clientes.length) filas.innerHTML = '<tr><td colspan="6" class="vacio">Sin resultados</td></tr>';
     for (const c of clientes) {
       const tr = document.createElement('tr');
       tr.dataset.id = c.id;
-      if (!c.activo) tr.classList.add('inactivo');
+      if (!c.activo || c.antiguo) tr.classList.add('inactivo');
       tr.innerHTML = `
-        <td class="num">${esc(c.nombre)}</td>
+        <td class="num">${esc(c.nombre)}${c.antiguo ? ' <span class="chip chip-claro" title="Más de 3 años sin factura">antiguo</span>' : ''}${c.activo ? '' : ' <span class="chip chip-claro">de baja</span>'}</td>
         <td>${esc(c.cif || '')}</td>
         <td>${esc(c.telefono || '')}</td>
-        <td>${esc(c.email || '')}</td>
+        <td>${esc(c.tecnico_nombre || '')}${c.tecnico_telefono ? ` <span class="suave">${esc(c.tecnico_telefono)}</span>` : ''}</td>
         <td class="suave">${esc(c.comercial_nombre || '')}</td>
-        <td>${chipOrigen(c)}</td>
-        <td>${c.activo ? '<span class="chip chip-ok">Activo</span>' : '<span class="chip chip-claro">Desactivado</span>'}</td>`;
+        <td class="suave">${esc(fecha(c.ultima_factura))}</td>`;
       tr.onclick = () => abrirCliente(c.id);
       filas.append(tr);
     }
   } catch (e) {
-    if (e.status !== 401) filas.innerHTML = `<tr><td colspan="7" class="vacio">${esc(e.message)}</td></tr>`;
+    if (e.status !== 401) filas.innerHTML = `<tr><td colspan="6" class="vacio">${esc(e.message)}</td></tr>`;
   } finally {
     filas.classList.remove('cargando');
   }
 }
 
-// Chip de procedencia de un cliente o una máquina (espejo de Karve en la Fase 5).
-function chipOrigen(c) {
-  if (c.origen === 'karve') return `<span class="chip chip-naranja" title="Sincronizado desde Karve${c.karve_id ? ' (' + esc(c.karve_id) + ')' : ''}">Karve</span>`;
-  return '<span class="chip chip-claro">Manual</span>';
-}
-
 // Modal de alta (id null) o edición de un cliente. Sin clientes.gestionar se abre en solo lectura.
+// F3-03: contactos de compras y técnico, correo de facturas y última factura; sin baja manual (regla de 3 años).
+const CAMPOS_CLIENTE = ['nombre', 'cif', 'telefono', 'direccion', 'compras_nombre', 'compras_telefono', 'tecnico_nombre', 'tecnico_telefono', 'tecnico_email', 'email_facturas', 'ultima_factura', 'email'];
 async function abrirCliente(id) {
   let cliente = null;
   if (id) {
@@ -619,7 +648,6 @@ async function abrirCliente(id) {
   const form = ref('form', nodo);
   const avisos = ref('avisos', nodo);
   const guardar = ref('guardar', nodo);
-  const btnActivo = ref('desactivar', nodo);
   const editable = puede('clientes.gestionar');
   ref('titulo', nodo).textContent = cliente ? cliente.nombre : 'Nuevo cliente';
 
@@ -644,7 +672,7 @@ async function abrirCliente(id) {
       const li = document.createElement('li');
       if (!m.activo) li.classList.add('inactivo');
       const detalle = [m.bastidor, m.num_flota ? `flota ${m.num_flota}` : ''].filter(Boolean).join(' · ');
-      li.innerHTML = `<b>${esc(nombreMaquina(m))}</b><span class="suave">${esc(detalle)}</span>${m.activo ? chipOrigen(m) : '<span class="chip chip-claro">Desactivada</span>'}`;
+      li.innerHTML = `<b>${esc(nombreMaquina(m))}</b><span class="suave">${esc(detalle)}</span>${m.activo ? '' : '<span class="chip chip-claro">Desactivada</span>'}`;
       li.onclick = () => abrirMaquina(m.id, { alGuardar: recargarMaquinasCliente });
       ul.append(li);
     }
@@ -655,16 +683,16 @@ async function abrirCliente(id) {
   };
 
   if (cliente) {
-    for (const campo of ['nombre', 'cif', 'telefono', 'email', 'direccion']) form.elements[campo].value = cliente[campo] || '';
+    for (const campo of CAMPOS_CLIENTE) form.elements[campo].value = cliente[campo] || '';
     form.elements.exige_pedido.checked = !!cliente.exige_pedido;
     ref('meta', nodo).innerHTML = `
-      <div><span>Origen</span>${chipOrigen(cliente)}</div>
       <div><span>Código Karve</span>${esc(cliente.karve_id || '—')}</div>
-      <div><span>Alta</span>${esc(fecha(cliente.creado))}${cliente.activo ? '' : ' · <b>desactivado</b>'}</div>`;
+      <div><span>Alta</span>${esc(fecha(cliente.creado))}</div>
+      <div><span>Actividad</span>${cliente.antiguo ? '<b>Antiguo</b>: más de 3 años sin factura' : (cliente.ultima_factura ? 'Con actividad' : 'Sin factura registrada')}${cliente.activo ? '' : ' · <b>de baja</b>'}</div>`;
     pintarMaquinasCliente();
     const btnMaquina = ref('nueva-maquina', nodo);
     if (btnMaquina) {
-      if (!cliente.activo) btnMaquina.classList.add('oculto'); // a un cliente de baja no se le asignan máquinas
+      if (!cliente.activo) btnMaquina.classList.add('oculto'); // bajas heredadas: sin máquinas nuevas
       btnMaquina.onclick = () => abrirMaquina(null, { cliente, alGuardar: recargarMaquinasCliente });
     }
   } else {
@@ -676,35 +704,12 @@ async function abrirCliente(id) {
     guardar.classList.add('oculto');
   }
 
-  if (cliente && editable) {
-    btnActivo.classList.remove('oculto');
-    btnActivo.textContent = cliente.activo ? 'Desactivar' : 'Reactivar';
-    btnActivo.classList.toggle('btn-peligro', !!cliente.activo);
-    btnActivo.onclick = async () => {
-      const activar = !cliente.activo;
-      if (!activar) {
-        const r = await elegir(`¿Desactivar a "${cliente.nombre}"? Sus máquinas, O.T. e historial se conservan.`, [{ etiqueta: 'Sí, desactivar', valor: 1, color: '#dc2626' }]);
-        if (!r) return;
-      }
-      btnActivo.disabled = true;
-      try {
-        await api(`/api/clientes/${cliente.id}`, { method: 'PUT', body: { activo: activar } });
-        toast(activar ? 'Cliente reactivado' : 'Cliente desactivado', 'ok');
-        cerrarModal(nodo);
-        refrescarVista();
-      } catch (e) {
-        mostrarErrorAccion(e, avisos);
-        btnActivo.disabled = false;
-      }
-    };
-  }
-
   form.onsubmit = async (e) => {
     e.preventDefault();
     if (!editable) return;
     guardar.disabled = true;
-    const v = (n) => form.elements[n].value.trim() || null;
-    const body = { nombre: v('nombre'), cif: v('cif'), telefono: v('telefono'), email: v('email'), direccion: v('direccion'), exige_pedido: form.elements.exige_pedido.checked, comercial_id: selComercial.value ? Number(selComercial.value) : null };
+    const body = { exige_pedido: form.elements.exige_pedido.checked, comercial_id: selComercial.value ? Number(selComercial.value) : null };
+    for (const campo of CAMPOS_CLIENTE) body[campo] = form.elements[campo].value.trim() || null;
     try {
       if (cliente) {
         await api(`/api/clientes/${cliente.id}`, { method: 'PUT', body });
@@ -759,7 +764,7 @@ async function cargarMaquinas() {
     const maquinas = await api(`/api/maquinas?${params}`);
     ref('contador', app).textContent = `${maquinas.length} máquina${maquinas.length === 1 ? '' : 's'}`;
     filas.innerHTML = '';
-    if (!maquinas.length) filas.innerHTML = '<tr><td colspan="7" class="vacio">Sin resultados</td></tr>';
+    if (!maquinas.length) filas.innerHTML = '<tr><td colspan="6" class="vacio">Sin resultados</td></tr>';
     for (const m of maquinas) {
       const tr = document.createElement('tr');
       tr.dataset.id = m.id;
@@ -768,15 +773,14 @@ async function cargarMaquinas() {
         <td class="num">${esc(nombreMaquina(m))}</td>
         <td>${esc(m.bastidor || '')}</td>
         <td>${esc(m.num_flota || '')}</td>
-        <td>${esc(m.cliente_nombre)}${m.cliente_activo ? '' : ' <span class="chip chip-claro" title="El cliente está desactivado">cliente de baja</span>'}</td>
+        <td>${esc(m.cliente_nombre)}</td>
         <td class="suave">${esc(textoHoras(m.horometro_ultimo))}</td>
-        <td>${chipOrigen(m)}</td>
         <td>${m.activo ? '<span class="chip chip-ok">Activa</span>' : '<span class="chip chip-claro">Desactivada</span>'}</td>`;
       tr.onclick = () => abrirMaquina(m.id);
       filas.append(tr);
     }
   } catch (e) {
-    if (e.status !== 401) filas.innerHTML = `<tr><td colspan="7" class="vacio">${esc(e.message)}</td></tr>`;
+    if (e.status !== 401) filas.innerHTML = `<tr><td colspan="6" class="vacio">${esc(e.message)}</td></tr>`;
   } finally {
     filas.classList.remove('cargando');
   }
@@ -812,7 +816,8 @@ async function abrirMaquina(id, { cliente = null, alGuardar = null } = {}) {
     }
     if (seleccionado && $(`option[value="${seleccionado}"]`, selClientes)) selClientes.value = seleccionado;
   };
-  try { clientes = await api('/api/clientes'); } catch (e) { mostrarErrorAccion(e, avisos); }
+  // ?todos=1 para que un cliente antiguo (sin factura en 3 años) también pueda recibir máquinas; las bajas heredadas no.
+  try { clientes = (await api('/api/clientes?todos=1')).filter((c) => c.activo); } catch (e) { mostrarErrorAccion(e, avisos); }
   pintarClientes();
   ref('buscar-cliente', nodo).oninput = (e) => pintarClientes(e.target.value);
   selClientes.onchange = () => { seleccionado = selClientes.value; };
@@ -821,7 +826,6 @@ async function abrirMaquina(id, { cliente = null, alGuardar = null } = {}) {
     for (const campo of ['marca', 'modelo', 'bastidor', 'num_flota', 'observaciones']) form.elements[campo].value = maquina[campo] || '';
     form.elements.horometro_ultimo.value = maquina.horometro_ultimo == null ? '' : maquina.horometro_ultimo;
     ref('meta', nodo).innerHTML = `
-      <div><span>Origen</span>${chipOrigen(maquina)}</div>
       <div><span>Código Karve</span>${esc(maquina.karve_id || '—')}</div>
       <div><span>O.T.</span>${maquina.num_ot}</div>
       <div><span>Alta</span>${esc(fecha(maquina.creado))}${maquina.activo ? '' : ' · <b>desactivada</b>'}</div>`;
@@ -1263,7 +1267,7 @@ async function abrirNuevaOT() {
   };
 
   try {
-    clientes = await api('/api/clientes');
+    clientes = (await api('/api/clientes?todos=1')).filter((c) => c.activo); // un cliente antiguo puede volver con una O.T.
   } catch (e) { mostrarErrorAccion(e, avisos); }
   pintarClientes();
   if (!clientes.length) aviso(avisos, 'No hay clientes todavía. Crea el primero aquí abajo.', 'conflicto');

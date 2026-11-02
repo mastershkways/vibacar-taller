@@ -74,8 +74,8 @@ Para parar: `Ctrl+C`. Tras cambiar cualquier `.js` de la raíz hay que reiniciar
 1. Abre `http://localhost:3010` en el navegador (desde otro PC de la red, la IP del servidor y el puerto).
 2. Entra con `APP_USUARIO` y `APP_CLAVE`.
 3. La pantalla depende del rol: el administrador ve el Tablero; un técnico ve "Mis O.T."; el resto, el Listado.
-4. Crea los clientes en la pestaña "Clientes" (o el primero directamente desde "+ Nueva O.T.", que también permite el alta rápida de cliente y máquina). Los clientes no se borran: se desactivan desde su ficha.
-5. Las máquinas, en la pestaña "Máquinas" o desde la ficha de su cliente (botón "+ Máquina"). Solo se asignan a clientes activos; el bastidor no puede repetirse. También se desactivan en vez de borrarse.
+4. Crea los clientes en Maestros → "Clientes" (o el primero directamente desde "+ Nueva O.T.", que también permite el alta rápida de cliente y máquina). La ficha lleva contacto de compras, contacto técnico, correo de facturas y fecha de la última factura. Los clientes no se borran ni se desactivan: el que lleva más de 3 años sin factura pasa a "antiguo" y solo aparece con "Mostrar: Todos" (la fecha vendrá de Karve).
+5. Las máquinas, en Maestros → "Máquinas" o desde la ficha de su cliente (botón "+ Máquina"). Solo se asignan a clientes activos; el bastidor no puede repetirse. También se desactivan en vez de borrarse.
 6. El personal, en la pestaña "Usuarios" (solo administradores): usuario, nombre, email, rol, código de operario en Karve y contraseña. Al editar, la contraseña en blanco no se toca; escribir una nueva la cambia. Desactivar a alguien bloquea su acceso al instante (y cierra su sesión) sin borrar sus O.T.; nadie puede desactivarse ni cambiarse el rol a sí mismo.
 7. Cada cliente puede tener un "Comercial responsable" (selector en su ficha, solo usuarios activos con rol comercial). Un usuario con rol comercial solo ve los clientes de su cartera, sus máquinas y sus O.T., en el Listado y en el Tablero; el resto le da "no encontrado". Quien no tenga cartera no ve nada hasta que se le asigne. El rol "Jefe comercial" tiene los mismos permisos pero ve todos los clientes.
 

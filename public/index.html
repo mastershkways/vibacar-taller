@@ -72,12 +72,12 @@
     <button class="btn btn-primario" data-accion="nuevo-cliente" data-permiso="clientes.gestionar">+ Nuevo cliente</button>
   </div>
   <form class="filtros" data-ref="filtros">
-    <div class="ancho"><label>Buscar</label><input type="search" name="q" placeholder="Razón social, NIF/CIF, email, teléfono o código Karve" autocomplete="off"></div>
-    <div><label>Mostrar</label><select name="todos"><option value="">Activos</option><option value="1">Todos</option></select></div>
+    <div class="ancho"><label>Buscar</label><input type="search" name="q" placeholder="Razón social, NIF/CIF, teléfono, contacto o código Karve" autocomplete="off"></div>
+    <div><label>Mostrar</label><select name="todos"><option value="">Con actividad</option><option value="1">Todos (incluye antiguos)</option></select></div>
   </form>
   <div class="tabla-envoltorio">
     <table class="tabla">
-      <thead><tr><th>Razón social</th><th>NIF/CIF</th><th>Teléfono</th><th>Email</th><th>Comercial</th><th>Origen</th><th>Estado</th></tr></thead>
+      <thead><tr><th>Razón social</th><th>NIF/CIF</th><th>Teléfono</th><th>Contacto técnico</th><th>Comercial</th><th>Última factura</th></tr></thead>
       <tbody data-ref="filas"></tbody>
     </table>
   </div>
@@ -97,7 +97,7 @@
   </form>
   <div class="tabla-envoltorio">
     <table class="tabla">
-      <thead><tr><th>Máquina</th><th>Bastidor</th><th>Nº flota</th><th>Cliente</th><th>Horas</th><th>Origen</th><th>Estado</th></tr></thead>
+      <thead><tr><th>Máquina</th><th>Bastidor</th><th>Nº flota</th><th>Cliente</th><th>Horas</th><th>Estado</th></tr></thead>
       <tbody data-ref="filas"></tbody>
     </table>
   </div>
@@ -240,7 +240,6 @@
         <button class="cerrar" type="button" data-accion="cerrar" aria-label="Cerrar">×</button>
       </div>
       <div class="modal-cuerpo">
-        <div class="aviso aviso-info" data-ref="aviso-karve">La sincronización con Karve se habilitará en la Fase 5. Hasta entonces los clientes se dan de alta a mano.</div>
         <div data-ref="avisos"></div>
         <form data-ref="form">
           <label>Razón social</label>
@@ -249,11 +248,28 @@
             <div><label>NIF/CIF</label><input type="text" name="cif" maxlength="20" autocomplete="off"></div>
             <div><label>Teléfono</label><input type="text" name="telefono" maxlength="50" inputmode="tel" autocomplete="off"></div>
           </div>
-          <label>Email</label>
-          <input type="email" name="email" maxlength="200" autocomplete="off">
           <label>Dirección</label>
           <textarea name="direccion" rows="2" maxlength="300"></textarea>
+          <div class="subtitulo"><span>Contacto de compras</span></div>
+          <div class="fila">
+            <div><label>Nombre</label><input type="text" name="compras_nombre" maxlength="120" autocomplete="off"></div>
+            <div><label>Teléfono</label><input type="text" name="compras_telefono" maxlength="50" inputmode="tel" autocomplete="off"></div>
+          </div>
+          <div class="subtitulo"><span>Contacto técnico</span></div>
+          <div class="fila">
+            <div><label>Nombre</label><input type="text" name="tecnico_nombre" maxlength="120" autocomplete="off"></div>
+            <div><label>Teléfono</label><input type="text" name="tecnico_telefono" maxlength="50" inputmode="tel" autocomplete="off"></div>
+          </div>
+          <label>Email del contacto técnico (recibe los partes)</label>
+          <input type="email" name="tecnico_email" maxlength="200" autocomplete="off">
+          <div class="subtitulo"><span>Facturación</span></div>
+          <div class="fila">
+            <div><label>Correo de envío de facturas</label><input type="email" name="email_facturas" maxlength="200" autocomplete="off"></div>
+            <div><label>Última factura</label><input type="date" name="ultima_factura" autocomplete="off"></div>
+          </div>
           <label class="check"><input type="checkbox" name="exige_pedido"> Exige nº de pedido antes de facturar</label>
+          <label>Email general</label>
+          <input type="email" name="email" maxlength="200" autocomplete="off">
           <label>Comercial responsable</label>
           <select name="comercial_id" data-ref="comerciales"><option value="">— Sin comercial —</option></select>
           <div class="datos separado" data-ref="meta"></div>
@@ -264,7 +280,6 @@
           <div class="acciones">
             <button class="btn btn-primario" type="submit" data-ref="guardar">Guardar</button>
             <button class="btn" type="button" data-accion="cerrar">Cancelar</button>
-            <button class="btn btn-peligro derecha oculto" type="button" data-ref="desactivar">Desactivar</button>
           </div>
         </form>
       </div>
@@ -280,7 +295,6 @@
         <button class="cerrar" type="button" data-accion="cerrar" aria-label="Cerrar">×</button>
       </div>
       <div class="modal-cuerpo">
-        <div class="aviso aviso-info" data-ref="aviso-karve">La sincronización con Karve se habilitará en la Fase 5. Hasta entonces las máquinas se dan de alta a mano.</div>
         <div data-ref="avisos"></div>
         <form data-ref="form">
           <label>Cliente propietario</label>
@@ -317,7 +331,6 @@
         <button class="cerrar" type="button" data-accion="cerrar" aria-label="Cerrar">×</button>
       </div>
       <div class="modal-cuerpo">
-        <div class="aviso aviso-info">El acceso (usuario, contraseña y rol) es propio de esta aplicación. El código de operario enlaza con su ficha en Karve para imputar horas en la Fase 5.</div>
         <div data-ref="avisos"></div>
         <form data-ref="form" autocomplete="off">
           <div class="fila">

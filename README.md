@@ -9,7 +9,7 @@ Aplicación web para gestionar las **Órdenes de Trabajo (O.T.)** de reparación
 - **Vista para tablet** del técnico: solo ve sus O.T. asignadas, registra tiempos, checklist, fotos y firma del cliente.
 - **Recambios**: el almacén vincula los repuestos usados a cada O.T.
 - **Cierre y facturación**: parte de trabajo, albarán y reclamación automática del nº de pedido al cliente cuando lo exige.
-- **Clientes**: ficha con razón social, NIF/CIF, email, teléfono, dirección y comercial responsable; buscador rápido; los clientes no se borran, se desactivan.
+- **Clientes**: ficha con razón social, NIF/CIF, teléfono, dirección, contacto de compras, contacto técnico (recibe los partes), correo de envío de facturas, fecha de la última factura y comercial responsable; buscador rápido. Un cliente sin factura en los últimos 3 años pasa a "antiguo" y deja de salir en la lista (se puede ver con "Todos").
 - **Máquinas**: ficha con marca, modelo, bastidor, nº de flota, horas y observaciones, siempre de un cliente activo; buscador por cualquiera de esos datos o por cliente; desde la ficha del cliente se ven y se dan de alta sus máquinas. Tampoco se borran: se desactivan.
 - **Usuarios**: el administrador da de alta al personal (técnicos internos, SAT externos y oficina) con su usuario, rol y contraseña, y puede cambiarla o desactivar a quien se marcha sin perder su historial. Cada técnico lleva su código de operario en Karve para imputar horas más adelante.
 - **Integración con Karve** (el ERP) para inventario, clientes, máquinas y numeración. Hasta que llegue, los clientes y las máquinas se dan de alta a mano y la pantalla indica si cada uno es manual o viene de Karve.

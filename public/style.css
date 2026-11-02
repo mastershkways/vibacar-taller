@@ -138,6 +138,19 @@ header.cabecera {
   content: ""; position: absolute; left: 14px; right: 14px; bottom: 4px; height: 2px;
   border-radius: 2px; background: var(--naranja);
 }
+/* Desplegables de la cabecera (F3-02): "Maestros" agrupa Clientes y Máquinas. La lista va en fixed (ver alternarMenu). */
+.cabecera nav .menu { position: relative; display: inline-flex; }
+.cabecera nav .menu-boton .flecha { font-size: 11px; margin-left: 2px; opacity: .7; }
+.cabecera nav .menu.activo > .menu-boton { background: var(--naranja-suave); color: var(--naranja-texto); }
+.cabecera nav .menu.abierto > .menu-boton { background: var(--fondo-2); color: var(--texto); }
+.cabecera nav .menu-lista {
+  display: none; position: fixed; z-index: 40; min-width: 180px; padding: 6px;
+  background: var(--tarjeta); border: 1px solid var(--borde); border-radius: var(--radio-s); box-shadow: var(--sombra-3);
+  flex-direction: column; gap: 2px; animation: modal-entra .15s ease;
+}
+.cabecera nav .menu.abierto .menu-lista { display: flex; }
+.cabecera nav .menu-lista button { text-align: left; width: 100%; }
+.cabecera nav .menu-lista button.activo::after { display: none; }
 .cabecera .usuario { font-size: 13px; color: var(--texto-suave); text-align: right; line-height: 1.25; white-space: nowrap; }
 .cabecera .usuario b { display: block; color: var(--texto); font-size: 14px; }
 .cabecera form { margin: 0; }

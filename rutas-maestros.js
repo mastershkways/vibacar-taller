@@ -28,9 +28,13 @@ module.exports = function montarRutasMaestros(app) {
   // `origen` (manual | karve) y `karve_id` los fijará la sincronización, no la API.
   // F2-05: `comercial_id` = comercial responsable (cartera). El alcance `clientes_propios` (rol comercial)
   // solo deja ver los clientes de su cartera, sus máquinas y sus O.T. (rutas-ot.js); fuera de alcance = 404.
+  // F3-03: contactos (compras, técnico, facturas) y `ultima_factura`. Regla de 3 años: un cliente sin factura en
+  // los últimos 3 años es "antiguo" y no sale en el listado salvo con ?todos=1. La baja manual (`activo`) ya no
+  // se gestiona desde la API: la columna se conserva y las bajas heredadas solo aparecen con ?todos=1.
   // -------------------------------------------------------------------------
   const soloMisClientes = (req) => alcanceDe(req.usuario.rol) === 'clientes_propios';
-  const COLUMNAS_CLIENTE = 'c.*, v.nombre AS comercial_nombre';
+  const ANTIGUO_SQL = "(c.ultima_factura IS NOT NULL AND c.ultima_factura < date('now', '-3 years'))";
+  const COLUMNAS_CLIENTE = `c.*, v.nombre AS comercial_nombre, CASE WHEN ${ANTIGUO_SQL} THEN 1 ELSE 0 END AS antiguo`;
   const leerClienteBD = (id) => db.prepare(`SELECT ${COLUMNAS_CLIENTE} FROM clientes c LEFT JOIN usuarios v ON v.id = c.comercial_id WHERE c.id = ?`).get(id);
 
   r.get('/clientes', requierePermiso('clientes.ver'), (req, res) => {
@@ -38,13 +42,13 @@ module.exports = function montarRutasMaestros(app) {
     const todos = req.query.todos === '1';
     let sql = `SELECT ${COLUMNAS_CLIENTE} FROM clientes c LEFT JOIN usuarios v ON v.id = c.comercial_id WHERE 1 = 1`;
     const p = [];
-    if (!todos) sql += ' AND c.activo = 1';
+    if (!todos) sql += ` AND c.activo = 1 AND NOT ${ANTIGUO_SQL}`;
     if (soloMisClientes(req)) { sql += ' AND c.comercial_id = ?'; p.push(req.usuario.id); }
     if (q) {
-      sql += ' AND (c.nombre LIKE ? OR c.cif LIKE ? OR c.karve_id LIKE ? OR c.email LIKE ? OR c.telefono LIKE ?)';
-      p.push(`%${q}%`, `%${q}%`, `%${q}%`, `%${q}%`, `%${q}%`);
+      sql += ' AND (c.nombre LIKE ? OR c.cif LIKE ? OR c.karve_id LIKE ? OR c.email LIKE ? OR c.telefono LIKE ? OR c.compras_nombre LIKE ? OR c.tecnico_nombre LIKE ?)';
+      p.push(`%${q}%`, `%${q}%`, `%${q}%`, `%${q}%`, `%${q}%`, `%${q}%`, `%${q}%`);
     }
-    sql += ' ORDER BY c.activo DESC, c.nombre COLLATE NOCASE LIMIT 500';
+    sql += ` ORDER BY c.activo DESC, ${ANTIGUO_SQL} ASC, c.nombre COLLATE NOCASE LIMIT 500`; // antiguos y bajas al final
     res.json(db.prepare(sql).all(...p));
   });
 
@@ -62,10 +66,14 @@ module.exports = function montarRutasMaestros(app) {
     res.json({ ...cliente, maquinas });
   });
 
+  const RE_EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
   function leerCliente(body, parcial) {
-    const email = texto(body.email, { nombre: 'email', max: 200 });
-    if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) throw new ErrorHttp(400, 'El email no tiene un formato válido');
+    // Campo opcional: vacío → null; ausente en un PUT parcial → undefined (no se toca).
+    const opc = (campo, max) => texto(body[campo], { nombre: campo, max }) ?? (parcial && body[campo] === undefined ? undefined : null);
+    const correo = (campo) => { const v = opc(campo, 200); if (v && !RE_EMAIL.test(v)) throw new ErrorHttp(400, `El email de "${campo}" no tiene un formato válido`); return v; };
     const cif = texto(body.cif, { nombre: 'cif', max: 20 });
+    const ultima = opc('ultima_factura', 10);
+    if (ultima && (!/^\d{4}-\d{2}-\d{2}$/.test(ultima) || Number.isNaN(Date.parse(ultima)))) throw new ErrorHttp(400, 'La fecha de última factura debe ser AAAA-MM-DD');
     const comercialId = entero(body.comercial_id, { nombre: 'comercial_id', min: 1 });
     if (comercialId) {
       const v = db.prepare('SELECT id, rol, activo FROM usuarios WHERE id = ?').get(comercialId);
@@ -76,12 +84,18 @@ module.exports = function montarRutasMaestros(app) {
       nombre: texto(body.nombre, { nombre: 'nombre', obligatorio: !parcial, max: 200 }) ?? undefined,
       comercial_id: comercialId ?? (parcial && body.comercial_id === undefined ? undefined : null),
       cif: (cif ? cif.toUpperCase().replace(/[\s-]/g, '') : null) ?? (parcial && body.cif === undefined ? undefined : null),
-      email: email ?? (parcial && body.email === undefined ? undefined : null),
-      telefono: texto(body.telefono, { nombre: 'telefono', max: 50 }) ?? (parcial && body.telefono === undefined ? undefined : null),
-      direccion: texto(body.direccion, { nombre: 'direccion', max: 300 }) ?? (parcial && body.direccion === undefined ? undefined : null),
+      email: correo('email'),
+      telefono: opc('telefono', 50),
+      direccion: opc('direccion', 300),
+      compras_nombre: opc('compras_nombre', 120),
+      compras_telefono: opc('compras_telefono', 50),
+      tecnico_nombre: opc('tecnico_nombre', 120),
+      tecnico_telefono: opc('tecnico_telefono', 50),
+      tecnico_email: correo('tecnico_email'),
+      email_facturas: correo('email_facturas'),
+      ultima_factura: ultima,
       exige_pedido: booleano(body.exige_pedido) ?? (parcial ? undefined : 0),
-      karve_id: texto(body.karve_id, { nombre: 'karve_id', max: 50 }) ?? (parcial && body.karve_id === undefined ? undefined : null),
-      activo: booleano(body.activo),
+      karve_id: opc('karve_id', 50),
     };
   }
 
@@ -95,12 +109,14 @@ module.exports = function montarRutasMaestros(app) {
   r.post('/clientes', requierePermiso('clientes.gestionar'), (req, res) => {
     const c = leerCliente(req.body || {}, false);
     comprobarCifLibre(c.cif);
-    const info = db.prepare('INSERT INTO clientes (nombre, cif, email, telefono, direccion, exige_pedido, karve_id, comercial_id, origen) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)')
-      .run(c.nombre, c.cif, c.email, c.telefono, c.direccion, c.exige_pedido, c.karve_id, c.comercial_id, 'manual');
+    const info = db.prepare(`INSERT INTO clientes (nombre, cif, email, telefono, direccion, exige_pedido, karve_id, comercial_id, compras_nombre, compras_telefono,
+      tecnico_nombre, tecnico_telefono, tecnico_email, email_facturas, ultima_factura, origen) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'manual')`)
+      .run(c.nombre, c.cif, c.email, c.telefono, c.direccion, c.exige_pedido, c.karve_id, c.comercial_id, c.compras_nombre, c.compras_telefono,
+        c.tecnico_nombre, c.tecnico_telefono, c.tecnico_email, c.email_facturas, c.ultima_factura);
     res.status(201).json(leerClienteBD(info.lastInsertRowid));
   });
 
-  // Edición parcial. Desactivar (baja lógica) = PUT { activo: false }; reactivar = PUT { activo: true }.
+  // Edición parcial. Desde F3-03 no hay baja manual: `activo` se ignora (la "baja" es no facturar en 3 años).
   r.put('/clientes/:id', requierePermiso('clientes.gestionar'), (req, res) => {
     const id = idRuta(req.params.id);
     if (!db.prepare('SELECT 1 FROM clientes WHERE id = ?').get(id)) throw new ErrorHttp(404, 'Cliente no encontrado');
