@@ -12,8 +12,9 @@
       --texto: #111827;
       --texto-suave: #6b7280;
       --borde: #d1d5db;
-      --primario: #ff4e00;
-      --primario-oscuro: #d94200;
+      --primario: #f28c00;
+      --primario-oscuro: #c96f00;
+      --sobre-primario: #1a1d21;
       --error-fondo: #fef2f2;
       --error-texto: #b91c1c;
       --error-borde: #fecaca;
@@ -55,7 +56,7 @@
       outline: none;
       transition: border-color .15s, box-shadow .15s;
     }
-    input:focus { border-color: var(--primario); box-shadow: 0 0 0 3px rgba(255, 78, 0, .15); }
+    input:focus { border-color: var(--primario); box-shadow: 0 0 0 3px rgba(242, 140, 0, .22); }
     button {
       width: 100%;
       margin-top: 22px;
@@ -63,7 +64,7 @@
       font: inherit;
       font-size: 17px;
       font-weight: 600;
-      color: #fff;
+      color: var(--sobre-primario);
       background: var(--primario);
       border: 0;
       border-radius: 10px;
