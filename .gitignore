@@ -10,3 +10,9 @@ server.log
 # Notas de trabajo del asistente y documentos internos
 contexto/
 CLAUDE.md
+
+# Pruebas: capturas y bases temporales que generan los arneses
+tests/capturas-*/
+tests/**/capturas-*/
+tests/*.db*
+driver-sql/

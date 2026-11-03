@@ -144,7 +144,9 @@ Para ver la interfaz con datos sin tener que crearlos a mano:
 node scripts/generar-datos-prueba.js
 ```
 
-Crea usuarios de prueba de todos los roles (`tecnico1`, `tecnico2`, `sat1`, `recambista1`, `finanzas1`, `comercial1`, `jefeventas1`, más `tecnico3` desactivado; los técnicos con código de operario en Karve; la contraseña se muestra al terminar), 12 clientes (manuales y "de Karve", dos desactivados; dos en la cartera de `comercial1`), sus máquinas y 20 O.T. repartidas por todas las columnas del Tablero, con historial y asignaciones. Se niega a ejecutarse si ya hay datos: `--limpiar` borra antes todas las O.T., máquinas y clientes (no los usuarios) y `--anadir` añade otra tanda. Respeta la numeración (sigue el contador) y no hace falta reiniciar el servidor. **Solo para bases de desarrollo o pruebas.**
+Crea usuarios de prueba de todos los roles (`finanzas1` administrativo, `responsable1`, `gerencia1`, `gestorsat1`, `tecnico1`, `tecnico2`, `sat1`, `recambista1`, `comercial1`, `jefeventas1`, más `tecnico3` desactivado; los técnicos con código de operario en Karve; la contraseña se muestra al terminar), 12 clientes con contactos y última factura (dos "antiguos" con más de 3 años sin factura; dos en la cartera de `comercial1`), 24 máquinas con estado, contrato y características (las que no traen nº de flota del cliente reciben uno `F-AA-0000`; el contador no se reinicia con `--limpiar`) y 20 O.T. repartidas por todas las columnas del Tablero, con historial y asignaciones. Se niega a ejecutarse si ya hay datos: `--limpiar` borra antes todas las O.T., máquinas y clientes (no los usuarios) y `--anadir` añade otra tanda. Respeta la numeración (sigue el contador) y no hace falta reiniciar el servidor. **Solo para bases de desarrollo o pruebas.**
+
+Las pruebas automáticas (HTTP, navegador headless y migración de roles) están en `tests/`; `tests/README.md` explica cómo lanzarlas con `tests\ejecutar-fase3.ps1`. Siempre usan una base temporal propia.
 
 ## 12. Estructura de archivos
 
@@ -158,6 +160,7 @@ validar.js           validadores de entrada y ErrorHttp
 rutas-maestros.js    API: clientes, máquinas, estados, técnicos, usuarios
 rutas-ot.js          API: O.T., estados, asignaciones, Kanban
 public/              interfaz: acceso.html, index.html, style.css, app.js, img/
+tests/               pruebas automáticas (ejecutar-fase3.ps1, arneses HTTP y de navegador; historico/ con los de las Fases 1-2)
 scripts/             crear-usuario.js, fijar-contador.js, generar-datos-prueba.js
 docs/                esta documentación
 .cache/              base de datos (no se versiona)

@@ -1,0 +1,37 @@
+// Comprobación de coherencia de los datos generados por scripts/generar-datos-prueba.js. Uso: node comprobar-datos.js <ruta.db>
+const d = require('better-sqlite3')(process.argv[2], { readonly: true });
+const res = [];
+const ok = (n, c, extra = '') => res.push(`${c ? 'OK ' : 'FALLO'} ${n}${extra ? ' — ' + extra : ''}`);
+
+const cl = d.prepare("SELECT COUNT(*) n, SUM(activo = 0) inactivos, SUM(origen = 'karve') karve, SUM(origen = 'karve' AND karve_id IS NULL) karveSinCodigo, SUM(direccion IS NULL) sinDireccion FROM clientes").get();
+ok('clientes: 12, 2 desactivados, 6 Karve con código, todos con dirección', cl.n === 12 && cl.inactivos === 2 && cl.karve === 6 && cl.karveSinCodigo === 0 && cl.sinDireccion === 0, JSON.stringify(cl));
+const nM = d.prepare('SELECT COUNT(*) n FROM maquinas').get().n;
+const nOT = d.prepare('SELECT COUNT(*) n FROM ot').get().n;
+ok('máquinas 24', nM === 24, `${nM}`);
+console.log('O.T. totales:', nOT);
+const porEstado = d.prepare('SELECT estado, COUNT(*) n, SUM(tecnico_id IS NOT NULL) conTec FROM ot GROUP BY estado').all();
+console.log('por estado:', porEstado.map((r) => `${r.estado}=${r.n}(tec ${r.conTec})`).join(' '));
+const abiertas = d.prepare("SELECT COUNT(*) n FROM ot o JOIN estados e ON e.codigo = o.estado JOIN fases f ON f.codigo = e.fase WHERE f.abierta = 1").get().n;
+ok('O.T. abiertas en el Kanban = total − cerradas', abiertas === nOT - d.prepare("SELECT COUNT(*) n FROM ot WHERE estado = 'cerrada'").get().n, `${abiertas}`);
+ok('todas las fases del Kanban con al menos una O.T.', d.prepare("SELECT COUNT(*) n FROM fases f WHERE f.abierta = 1 AND NOT EXISTS (SELECT 1 FROM ot o JOIN estados e ON e.codigo = o.estado WHERE e.fase = f.codigo)").get().n === 0);
+ok('asignadas/en curso/pausadas/finalizadas… tienen técnico', d.prepare("SELECT COUNT(*) n FROM ot WHERE estado IN ('asignada','en_curso','pausada','finalizada','pendiente_pedido','vb_factura','cerrada') AND tecnico_id IS NULL").get().n === 0);
+ok('abiertas/pendientes de asignación sin técnico', d.prepare("SELECT COUNT(*) n FROM ot WHERE estado IN ('abierta','pendiente_asignacion') AND tecnico_id IS NOT NULL").get().n === 0);
+const numeros = d.prepare('SELECT numero FROM ot ORDER BY secuencia').all().map((r) => r.numero);
+ok('numeración correlativa y única', new Set(numeros).size === numeros.length && numeros.every((n, i) => i === 0 || Number(n.slice(-4)) === Number(numeros[i - 1].slice(-4)) + 1), `${numeros[0]} … ${numeros[numeros.length - 1]}`);
+ok('numeración sigue el orden cronológico de creación', d.prepare('SELECT COUNT(*) n FROM ot a JOIN ot b ON a.secuencia < b.secuencia AND a.creado > b.creado').get().n === 0);
+const versiones = d.prepare(`SELECT o.numero, o.version, (SELECT COUNT(*) FROM ot_historial h WHERE h.ot_id = o.id) hist, (SELECT COUNT(*) FROM ot_asignaciones a WHERE a.ot_id = o.id AND a.estado = 'aprobada') asig FROM ot o`).all();
+ok('version = 1 apertura + cambios de estado + asignaciones aprobadas', versiones.every((v) => v.version === v.hist + v.asig), JSON.stringify(versiones.filter((v) => v.version !== v.hist + v.asig)));
+ok('historial: primera entrada "Apertura" sin estado anterior', d.prepare("SELECT COUNT(*) n FROM ot o WHERE (SELECT estado_anterior FROM ot_historial h WHERE h.ot_id = o.id ORDER BY h.id LIMIT 1) IS NOT NULL").get().n === 0);
+ok('historial: última entrada = estado actual', d.prepare('SELECT COUNT(*) n FROM ot o WHERE (SELECT estado_nuevo FROM ot_historial h WHERE h.ot_id = o.id ORDER BY h.id DESC LIMIT 1) != o.estado').get().n === 0);
+ok('historial: fechas crecientes dentro de cada O.T.', d.prepare('SELECT COUNT(*) n FROM ot_historial h1 JOIN ot_historial h2 ON h1.ot_id = h2.ot_id AND h1.id < h2.id AND h1.fecha > h2.fecha').get().n === 0);
+ok('historial: toda transición existe en la tabla transiciones', d.prepare('SELECT COUNT(*) n FROM ot_historial h WHERE h.estado_anterior IS NOT NULL AND NOT EXISTS (SELECT 1 FROM transiciones t WHERE t.origen = h.estado_anterior AND t.destino = h.estado_nuevo)').get().n === 0);
+ok('historial: fechas no futuras', d.prepare("SELECT COUNT(*) n FROM ot_historial WHERE fecha > datetime('now','localtime')").get().n === 0);
+const asig = d.prepare('SELECT estado, COUNT(*) n FROM ot_asignaciones GROUP BY estado').all();
+ok('asignaciones: aprobadas con resuelto_por y 1 propuesta pendiente', asig.some((a) => a.estado === 'propuesta' && a.n >= 1) && d.prepare("SELECT COUNT(*) n FROM ot_asignaciones WHERE estado = 'aprobada' AND (resuelto_por IS NULL OR resuelto_en IS NULL)").get().n === 0, JSON.stringify(asig));
+ok('máquinas de la O.T. pertenecen a su cliente', d.prepare('SELECT COUNT(*) n FROM ot o JOIN maquinas m ON m.id = o.maquina_id WHERE m.cliente_id != o.cliente_id').get().n === 0);
+ok('usuarios de prueba: 2 técnicos, 1 SAT, recambista, financiero, comercial', d.prepare("SELECT COUNT(*) n FROM usuarios WHERE usuario IN ('tecnico1','tecnico2','sat1','recambista1','finanzas1','comercial1')").get().n === 6);
+ok('ninguna fila con creado_por nulo', d.prepare('SELECT COUNT(*) n FROM ot WHERE creado_por IS NULL').get().n === 0);
+console.log(res.join('\n'));
+const fallos = res.filter((r) => r.startsWith('FALLO')).length;
+console.log(`\n${res.length - fallos}/${res.length} OK, ${fallos} fallos`);
+process.exit(fallos ? 1 : 0);
