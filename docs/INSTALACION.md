@@ -159,10 +159,35 @@ permisos.js          roles, acciones y matriz de permisos (única fuente de verd
 validar.js           validadores de entrada y ErrorHttp
 rutas-maestros.js    API: clientes, máquinas, estados, técnicos, usuarios
 rutas-ot.js          API: O.T., estados, asignaciones, Kanban
+karve.js             conexión de SOLO LECTURA a Karve por ODBC (driver portable en driver-sql/, ignorado por git)
 public/              interfaz: acceso.html, index.html, style.css, app.js, img/
 tests/               pruebas automáticas (ejecutar-fase3.ps1, arneses HTTP y de navegador; historico/ con los de las Fases 1-2)
-scripts/             crear-usuario.js, fijar-contador.js, generar-datos-prueba.js
+scripts/             crear-usuario.js, fijar-contador.js, generar-datos-prueba.js, karve-probar.js, karve-explorar.js
 docs/                esta documentación
 .cache/              base de datos (no se versiona)
 .env                 configuración y credenciales (no se versiona)
 ```
+
+## 13. Conexión a Karve (solo lectura, Fase 3.5)
+
+Karve es SAP SQL Anywhere 17 y se consulta por ODBC con el paquete npm `odbc`. **El driver no se instala por npm**: es el cliente portable de SQL Anywhere 17 de 64 bits en la carpeta `driver-sql/` del proyecto (ignorada por git; copiar la misma carpeta que usa `vibacar-facturacion`). `karve.js` antepone esa carpeta al `PATH` al arrancar.
+
+Windows exige que el driver esté **registrado con el nombre `SQL Anywhere 17`** en el Administrador ODBC de 64 bits; una ruta al DLL en la cadena de conexión no vale. Si en el PC ya está registrado (por `vibacar-facturacion`, por ejemplo) no hay que hacer nada; si no, hay que crear las claves del registro como administrador:
+
+```
+HKLM\SOFTWARE\ODBC\ODBCINST.INI\ODBC Drivers      "SQL Anywhere 17" = "Installed"
+HKLM\SOFTWARE\ODBC\ODBCINST.INI\SQL Anywhere 17   Driver = <ruta>\driver-sql\dbodbc17.dll · Setup = <ruta>\driver-sql\dbodbc17.dll
+```
+
+Comprobación: `Get-OdbcDriver -Name "SQL Anywhere 17" -Platform 64-bit`. Sin registro el error es `IM002`.
+
+En el `.env`: `KARVE_COPIA_CONNECTION_STRING` (base de pruebas) y, más adelante, `KARVE_CONNECTION_STRING` (producción), con la cadena completa `DRIVER={SQL Anywhere 17};ServerName=…;Host=…;DatabaseName=…;UID=…;PWD=…`. `karve.js` añade `CharSet=UTF-8` si falta (sin él los acentos llegan rotos), solo ejecuta `SELECT` y nunca escribe la cadena en logs ni errores.
+
+```
+node scripts/karve-probar.js                      comprueba la conexión (base, usuario, hora del servidor, latencia)
+node scripts/karve-explorar.js                    catálogo e informe de tablas candidatas en contexto/ (no versionado)
+node scripts/karve-explorar.js --buscar texto     tablas, vistas y columnas con ese texto
+node scripts/karve-explorar.js --tabla CV.kv_vClientes   columnas y muestra de una tabla o vista
+```
+
+Si `npm start` falla con "Una directiva de Control de aplicaciones bloqueó este archivo" (`odbc.node`), es el Smart App Control de Windows: hay que permitirlo.
