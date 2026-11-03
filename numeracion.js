@@ -87,4 +87,28 @@ function proximoNumero(anio = anioActual()) {
   return formatearNumero(anio, base + 1);
 }
 
-module.exports = { siguienteNumeroOT, fijarContador, leerContador, proximoNumero, formatearNumero, anioActual };
+// ---------------------------------------------------------------------------
+// Nº de flota de máquinas (F3-04): F-YY-XXXX por año (F-26-0001), contador 'flota-2026' en la misma tabla.
+// Robusto: transacción IMMEDIATE (sin duplicados entre usuarios concurrentes), un contador por año y, si el
+// número generado ya existe en maquinas.num_flota (los antiguos de Karve se respetan tal cual), salta al siguiente.
+// ---------------------------------------------------------------------------
+function formatearFlota(anio, secuencia) {
+  return `F-${String(anio).slice(-2)}-${String(secuencia).padStart(4, '0')}`;
+}
+
+const siguienteNumeroFlota = db.transaction((anio = anioActual()) => {
+  const clave = `flota-${anio}`;
+  let fila = db.prepare('SELECT valor FROM contadores WHERE clave = ?').get(clave);
+  if (!fila) {
+    db.prepare('INSERT INTO contadores (clave, valor, actualizado) VALUES (?, 0, ?)').run(clave, ahora());
+    fila = { valor: 0 };
+  }
+  const existe = db.prepare('SELECT 1 FROM maquinas WHERE num_flota = ?');
+  let secuencia = fila.valor;
+  let numero;
+  do { secuencia++; numero = formatearFlota(anio, secuencia); } while (existe.get(numero));
+  db.prepare('UPDATE contadores SET valor = ?, actualizado = ? WHERE clave = ?').run(secuencia, ahora(), clave);
+  return numero;
+}).immediate;
+
+module.exports = { siguienteNumeroOT, fijarContador, leerContador, proximoNumero, formatearNumero, anioActual, siguienteNumeroFlota, formatearFlota };

@@ -6,7 +6,8 @@
 const express = require('express');
 const { db, ahora, hashClave } = require('./db');
 const { requierePermiso, esRolValido, alcanceDe, ROLES } = require('./permisos');
-const { ErrorHttp, texto, entero, booleano, idRuta } = require('./validar');
+const { ErrorHttp, texto, entero, booleano, enumerado, idRuta } = require('./validar');
+const { siguienteNumeroFlota } = require('./numeracion');
 
 // UPDATE parcial: solo las columnas presentes en `cambios` (valor undefined = no tocar).
 function actualizarParcial(tabla, id, cambios) {
@@ -130,6 +131,9 @@ module.exports = function montarRutasMaestros(app) {
   // Máquinas — espejo local del maestro de Karve (Fase 5), igual que clientes: baja lógica con
   // `activo`; `origen` (manual | karve) y `karve_id` los fijará la sincronización, no la API.
   // Cada máquina pertenece a un cliente, y solo se asigna (o se cambia) a un cliente activo.
+  // F3-04: `estado` (propia | rent_to_rent | subalquilada | cliente_final), `num_contrato` (nunca con cliente_final),
+  // `caracteristicas`; nº de flota automático F-YY-XXXX al crear (numeracion.js); tras el alta solo se editan horas,
+  // observaciones y activo, salvo el rol administrativo, que puede corregir el resto (403 para los demás).
   // -------------------------------------------------------------------------
   const COLUMNAS_MAQUINA = `m.*, c.nombre AS cliente_nombre, c.activo AS cliente_activo, c.comercial_id AS cliente_comercial_id,
     (SELECT COUNT(*) FROM ot o WHERE o.maquina_id = m.id) AS num_ot`;
@@ -145,8 +149,8 @@ module.exports = function montarRutasMaestros(app) {
     if (soloMisClientes(req)) { sql += ' AND c.comercial_id = ?'; p.push(req.usuario.id); }
     if (clienteId) { sql += ' AND m.cliente_id = ?'; p.push(clienteId); }
     if (q) {
-      sql += ' AND (m.marca LIKE ? OR m.modelo LIKE ? OR m.bastidor LIKE ? OR m.num_flota LIKE ? OR m.karve_id LIKE ? OR c.nombre LIKE ?)';
-      p.push(`%${q}%`, `%${q}%`, `%${q}%`, `%${q}%`, `%${q}%`, `%${q}%`);
+      sql += ' AND (m.marca LIKE ? OR m.modelo LIKE ? OR m.bastidor LIKE ? OR m.num_flota LIKE ? OR m.num_contrato LIKE ? OR m.karve_id LIKE ? OR c.nombre LIKE ?)';
+      p.push(`%${q}%`, `%${q}%`, `%${q}%`, `%${q}%`, `%${q}%`, `%${q}%`, `%${q}%`);
     }
     sql += ' ORDER BY m.activo DESC, c.nombre COLLATE NOCASE, m.marca COLLATE NOCASE, m.modelo COLLATE NOCASE LIMIT 500';
     res.json(db.prepare(sql).all(...p));
@@ -171,6 +175,9 @@ module.exports = function montarRutasMaestros(app) {
     if (otra) throw new ErrorHttp(409, `Ya existe una máquina con el bastidor ${bastidor}: ${[otra.marca, otra.modelo].filter(Boolean).join(' ') || 'sin marca'} de "${otra.cliente}"`, { maquina_id: otra.id });
   }
 
+  const ESTADOS_MAQUINA = ['propia', 'rent_to_rent', 'subalquilada', 'cliente_final'];
+  const CAMPOS_LIBRES_MAQUINA = ['horometro_ultimo', 'observaciones', 'activo'];
+
   function leerMaquina(body, parcial) {
     const clienteId = entero(body.cliente_id, { nombre: 'cliente_id', obligatorio: !parcial, min: 1 });
     if (clienteId !== null) comprobarCliente(clienteId);
@@ -180,12 +187,17 @@ module.exports = function montarRutasMaestros(app) {
     if (horometro !== undefined && horometro !== null && (!Number.isFinite(horometro) || horometro < 0)) throw new ErrorHttp(400, '"horometro_ultimo" no es válido');
     const opc = (campo, max) => texto(body[campo], { nombre: campo, max }) ?? (parcial && body[campo] === undefined ? undefined : null);
     const bastidor = opc('bastidor', 100);
+    const sinEstado = body.estado === undefined || body.estado === null || body.estado === '';
+    const estado = parcial && sinEstado ? undefined : enumerado(body.estado, { nombre: 'estado', valores: ESTADOS_MAQUINA, defecto: 'cliente_final' });
     return {
       cliente_id: clienteId ?? undefined,
       marca: opc('marca', 100),
       modelo: opc('modelo', 100),
       bastidor: bastidor ? bastidor.toUpperCase() : bastidor, // los bastidores se guardan en mayúsculas
-      num_flota: opc('num_flota', 50),
+      num_flota: parcial ? opc('num_flota', 50) : undefined, // al crear se genera; solo administrativo lo corrige
+      estado,
+      num_contrato: opc('num_contrato', 100),
+      caracteristicas: opc('caracteristicas', 4000),
       horometro_ultimo: horometro,
       observaciones: opc('observaciones', 2000),
       karve_id: opc('karve_id', 50),
@@ -195,11 +207,13 @@ module.exports = function montarRutasMaestros(app) {
 
   r.post('/maquinas', requierePermiso('maquinas.gestionar'), (req, res) => {
     const m = leerMaquina(req.body || {}, false);
-    if (!m.marca && !m.modelo && !m.bastidor && !m.num_flota) throw new ErrorHttp(400, 'Indica al menos marca, modelo, bastidor o nº de flota');
+    if (!m.marca && !m.modelo && !m.bastidor) throw new ErrorHttp(400, 'Indica al menos marca, modelo o bastidor');
     comprobarBastidorLibre(m.bastidor);
-    const info = db.prepare(`INSERT INTO maquinas (cliente_id, marca, modelo, bastidor, num_flota, horometro_ultimo, observaciones, karve_id, origen)
-                             VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'manual')`)
-      .run(m.cliente_id, m.marca, m.modelo, m.bastidor, m.num_flota, m.horometro_ultimo, m.observaciones, m.karve_id);
+    if (m.estado === 'cliente_final') m.num_contrato = null;
+    m.num_flota = siguienteNumeroFlota(); // F-YY-XXXX
+    const info = db.prepare(`INSERT INTO maquinas (cliente_id, marca, modelo, bastidor, num_flota, estado, num_contrato, caracteristicas, horometro_ultimo, observaciones, karve_id, origen)
+                             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'manual')`)
+      .run(m.cliente_id, m.marca, m.modelo, m.bastidor, m.num_flota, m.estado, m.num_contrato, m.caracteristicas, m.horometro_ultimo, m.observaciones, m.karve_id);
     res.status(201).json(leerMaquinaBD(info.lastInsertRowid));
   });
 
@@ -207,9 +221,14 @@ module.exports = function montarRutasMaestros(app) {
   // Si no viene cliente_id no se comprueba el cliente: una máquina de un cliente de baja se puede seguir editando.
   r.put('/maquinas/:id', requierePermiso('maquinas.gestionar'), (req, res) => {
     const id = idRuta(req.params.id);
-    if (!db.prepare('SELECT 1 FROM maquinas WHERE id = ?').get(id)) throw new ErrorHttp(404, 'Máquina no encontrada');
+    const existente = db.prepare('SELECT id, estado FROM maquinas WHERE id = ?').get(id);
+    if (!existente) throw new ErrorHttp(404, 'Máquina no encontrada');
     const m = leerMaquina(req.body || {}, true);
+    const bloqueados = Object.keys(m).filter((k) => m[k] !== undefined && !CAMPOS_LIBRES_MAQUINA.includes(k));
+    if (bloqueados.length && req.usuario.rol !== 'administrativo') throw new ErrorHttp(403, `Tras el alta solo se cambian horas y observaciones. Solo un administrativo puede corregir: ${bloqueados.join(', ')}`, { bloqueados });
     if (m.bastidor) comprobarBastidorLibre(m.bastidor, id);
+    const estadoFinal = m.estado ?? existente.estado;
+    if (estadoFinal === 'cliente_final' && (m.estado !== undefined || m.num_contrato !== undefined)) m.num_contrato = null; // sin contrato con cliente final
     actualizarParcial('maquinas', id, m);
     res.json(leerMaquinaBD(id));
   });
@@ -229,7 +248,7 @@ module.exports = function montarRutasMaestros(app) {
   });
 
   // -------------------------------------------------------------------------
-  // Usuarios (usuarios.gestionar, hoy solo admontaller) y lista de técnicos (para asignar).
+  // Usuarios (usuarios.gestionar: administrativo) y lista de técnicos (para asignar).
   // El acceso web (clave scrypt, rol, activo) es exclusivo de esta app; `karve_id` enlaza al operario con su
   // ficha en Karve para imputar horas en la Fase 5. `origen` lo fijará la sincronización, no la API.
   // Baja lógica con `activo`: el login (auth.js) solo admite activos y al desactivar se expulsan sus sesiones.

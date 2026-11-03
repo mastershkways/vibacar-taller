@@ -81,6 +81,9 @@ function filtroAlcance(req) {
     case 'clientes_propios':
       // F2-05: el comercial solo ve las O.T. de los clientes de su cartera (clientes.comercial_id = él).
       return { sql: ' AND o.cliente_id IN (SELECT id FROM clientes WHERE comercial_id = ?)', params: [req.usuario.id] };
+    case 'sat':
+      // F3-05: el gestor de SAT ve las O.T. de SAT externos y las que aún no tienen técnico (para asignárselas).
+      return { sql: " AND (o.tecnico_id IS NULL OR o.tecnico_id IN (SELECT id FROM usuarios WHERE rol = 'sat'))", params: [] };
     default:
       return { sql: '', params: [] };
   }

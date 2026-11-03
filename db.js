@@ -226,6 +226,10 @@ const COLUMNAS_NUEVAS = [
   ['clientes', 'ultima_factura', 'TEXT'],
   // Fase 2 (F2-03): maestro de máquinas, mismo espejo de Karve que clientes (origen + karve_id).
   ['maquinas', 'origen', "TEXT NOT NULL DEFAULT 'manual'"],
+  // Fase 3 (F3-04): estado de la máquina, nº de contrato (salvo cliente final) y características técnicas; `origen` se conserva sin interfaz.
+  ['maquinas', 'estado', "TEXT NOT NULL DEFAULT 'cliente_final'"],
+  ['maquinas', 'num_contrato', 'TEXT'],
+  ['maquinas', 'caracteristicas', 'TEXT'],
   ['maquinas', 'observaciones', 'TEXT'],
 ];
 
@@ -237,9 +241,33 @@ function asegurarColumna(tabla, columna, definicion) {
   }
 }
 
+// F3-05: roles anteriores → nuevos, en usuarios y en transiciones. El admin inicial (APP_USUARIO) pasa a
+// administrativo para que nadie pierda la gestión de usuarios; el resto de admontaller → responsable_st; financiero → administrativo.
+function migrarRoles() {
+  const { ROLES_ANTIGUOS } = require('./permisos');
+  const viejos = Object.keys(ROLES_ANTIGUOS);
+  const marcas = viejos.map(() => '?').join(', ');
+  const n = db.prepare(`SELECT COUNT(*) AS n FROM usuarios WHERE rol IN (${marcas})`).get(...viejos).n;
+  if (n) {
+    const admin = (process.env.APP_USUARIO || '').trim();
+    if (admin) db.prepare("UPDATE usuarios SET rol = 'administrativo' WHERE usuario = ? AND rol = 'admontaller'").run(admin);
+    for (const [viejo, nuevo] of Object.entries(ROLES_ANTIGUOS)) db.prepare('UPDATE usuarios SET rol = ? WHERE rol = ?').run(nuevo, viejo);
+    console.log(`   BD: ${n} usuario(s) con roles antiguos migrados (admontaller → responsable_st, financiero → administrativo${admin ? `; "${admin}" → administrativo` : ''})`);
+  }
+  const filas = db.prepare(`SELECT origen, destino, rol FROM transiciones WHERE rol IN (${marcas})`).all(...viejos);
+  if (filas.length) {
+    const existe = db.prepare('SELECT 1 FROM transiciones WHERE origen = ? AND destino = ? AND rol = ?');
+    const ins = db.prepare('INSERT INTO transiciones (origen, destino, rol) VALUES (?, ?, ?)');
+    for (const t of filas) for (const rol of (t.rol === 'admontaller' ? OFICINA : ['administrativo'])) if (!existe.get(t.origen, t.destino, rol)) ins.run(t.origen, t.destino, rol);
+    db.prepare(`DELETE FROM transiciones WHERE rol IN (${marcas})`).run(...viejos);
+    console.log(`   BD: ${filas.length} transiciones migradas a los roles nuevos`);
+  }
+}
+
 function migrar() {
   db.exec(TABLAS);
   for (const [tabla, columna, definicion] of COLUMNAS_NUEVAS) asegurarColumna(tabla, columna, definicion);
+  migrarRoles();
   sembrar();
 }
 
@@ -275,24 +303,26 @@ const ESTADOS_SEMILLA = [
   ['cerrada',              'Cerrada',                 'cerrada',              1, 0, 1, 2, '#374151'],
 ];
 
-// Flujo básico provisional. [origen, destino, roles que pueden hacerlo]
+// Flujo básico provisional. [origen, destino, roles que pueden hacerlo]. OFICINA = los que mandan sobre la O.T. (F3-05).
+// En F4-04 el flujo pasa a ser libre y esta tabla solo marcará avisos.
+const OFICINA = ['administrativo', 'responsable_st', 'gestor_sat'];
 const TRANSICIONES_SEMILLA = [
-  ['abierta',              'pendiente_repuesto',   ['admontaller', 'recambista']],
-  ['abierta',              'pendiente_asignacion', ['admontaller']],
-  ['abierta',              'cerrada',              ['admontaller']],                       // anulación
-  ['pendiente_repuesto',   'pendiente_asignacion', ['admontaller', 'recambista']],
-  ['pendiente_asignacion', 'asignada',             ['admontaller']],
-  ['asignada',             'en_curso',             ['admontaller', 'tecnico', 'sat']],
-  ['asignada',             'pendiente_asignacion', ['admontaller']],                       // reasignar
-  ['en_curso',             'pausada',              ['admontaller', 'tecnico', 'sat']],
-  ['en_curso',             'pendiente_repuesto',   ['admontaller', 'tecnico']],            // faltan piezas a mitad
-  ['en_curso',             'finalizada',           ['admontaller', 'tecnico', 'sat']],
-  ['pausada',              'en_curso',             ['admontaller', 'tecnico', 'sat']],
-  ['finalizada',           'pendiente_pedido',     ['admontaller', 'financiero']],
-  ['finalizada',           'vb_factura',           ['admontaller', 'financiero']],
-  ['finalizada',           'en_curso',             ['admontaller']],                       // reabrir
-  ['pendiente_pedido',     'vb_factura',           ['admontaller', 'financiero']],
-  ['vb_factura',           'cerrada',              ['admontaller', 'financiero']],
+  ['abierta',              'pendiente_repuesto',   [...OFICINA, 'recambista']],
+  ['abierta',              'pendiente_asignacion', [...OFICINA]],
+  ['abierta',              'cerrada',              [...OFICINA]],                       // anulación
+  ['pendiente_repuesto',   'pendiente_asignacion', [...OFICINA, 'recambista']],
+  ['pendiente_asignacion', 'asignada',             [...OFICINA]],
+  ['asignada',             'en_curso',             [...OFICINA, 'tecnico', 'sat']],
+  ['asignada',             'pendiente_asignacion', [...OFICINA]],                       // reasignar
+  ['en_curso',             'pausada',              [...OFICINA, 'tecnico', 'sat']],
+  ['en_curso',             'pendiente_repuesto',   [...OFICINA, 'tecnico']],            // faltan piezas a mitad
+  ['en_curso',             'finalizada',           [...OFICINA, 'tecnico', 'sat']],
+  ['pausada',              'en_curso',             [...OFICINA, 'tecnico', 'sat']],
+  ['finalizada',           'pendiente_pedido',     [...OFICINA]],
+  ['finalizada',           'vb_factura',           [...OFICINA]],
+  ['finalizada',           'en_curso',             [...OFICINA]],                       // reabrir
+  ['pendiente_pedido',     'vb_factura',           [...OFICINA]],
+  ['vb_factura',           'cerrada',              [...OFICINA]],
 ];
 
 function tablaVacia(tabla) {
@@ -322,8 +352,8 @@ const sembrar = db.transaction(() => {
     const clave = process.env.APP_CLAVE || '';
     if (usuario && clave) {
       db.prepare('INSERT INTO usuarios (usuario, nombre, clave_hash, rol) VALUES (?, ?, ?, ?)')
-        .run(usuario, 'Administrador', hashClave(clave), 'admontaller');
-      console.log(`   BD: creado el usuario administrador inicial "${usuario}" (rol admontaller)`);
+        .run(usuario, 'Administrador', hashClave(clave), 'administrativo');
+      console.log(`   BD: creado el usuario administrador inicial "${usuario}" (rol administrativo)`);
     } else {
       console.warn('   ⚠️ BD: no hay usuarios y faltan APP_USUARIO/APP_CLAVE en el .env: nadie podrá entrar.');
     }

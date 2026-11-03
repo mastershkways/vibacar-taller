@@ -1,9 +1,9 @@
 // app.js — Gestión de Taller Vibacar. Interfaz de una sola página, sin frameworks.
 //
 // Arranque: GET /api/sesion + GET /api/estados → estado global `S` → vista según el rol.
-//   admontaller            → Tablero (Kanban) con polling cada 10 s (ETag / 304)
+//   administrativo, responsable_st, gestor_sat, gerencia → Tablero (Kanban) con polling cada 10 s (ETag / 304)
 //   tecnico, sat           → Mis O.T. (tablet: tarjetas y botones grandes)
-//   recambista, financiero, comercial → Listado (tabla); Tablero si el rol tiene kanban.ver
+//   recambista, comercial, comercial_jefe → Listado (tabla); Tablero si el rol tiene kanban.ver
 // Las vistas son <template> del index.html que se clonan en <main id="app">.
 // Lo que se pinta depende de los permisos que devuelve el servidor; la barrera real está en la API.
 
@@ -223,7 +223,7 @@ const VISTAS = {
   kanban: { titulo: 'Tablero', visible: () => puede('kanban.ver'), pintar: pintarKanban },
   misot: { titulo: 'Mis O.T.', visible: () => S.sesion.alcance === 'asignadas', pintar: pintarMisOT },
   listado: { titulo: 'Listado', visible: () => puede('ot.ver'), pintar: pintarListado },
-  // Maestro de clientes: roles de oficina con clientes.ver (admontaller, financiero, comercial, recambista); no en la tablet del técnico/SAT.
+  // Maestros: roles de oficina con clientes.ver / maquinas.ver; no en la tablet del técnico/SAT.
   clientes: { titulo: 'Clientes', grupo: 'Maestros', visible: () => puede('clientes.ver') && S.sesion.alcance !== 'asignadas', pintar: pintarClientes },
   maquinas: { titulo: 'Máquinas', grupo: 'Maestros', visible: () => puede('maquinas.ver') && S.sesion.alcance !== 'asignadas', pintar: pintarMaquinas },
   usuarios: { titulo: 'Usuarios', visible: () => puede('usuarios.gestionar'), pintar: pintarUsuarios },
@@ -231,7 +231,7 @@ const VISTAS = {
 
 function vistaPorDefecto() {
   if (S.sesion.alcance === 'asignadas') return 'misot';
-  if (S.sesion.usuario.rol === 'admontaller' && puede('kanban.ver')) return 'kanban';
+  if (['administrativo', 'responsable_st', 'gestor_sat', 'gerencia'].includes(S.sesion.usuario.rol) && puede('kanban.ver')) return 'kanban';
   return 'listado';
 }
 
@@ -740,6 +740,8 @@ function textoHoras(h) {
   return h == null ? '' : `${Number(h).toLocaleString('es-ES', { maximumFractionDigits: 1 })} h`;
 }
 
+const ESTADOS_MAQUINA = { propia: 'Propia', rent_to_rent: 'Rent to Rent', subalquilada: 'Subalquilada', cliente_final: 'Cliente final' };
+
 function pintarMaquinas() {
   const form = ref('filtros', app);
   let temporizador = null;
@@ -770,12 +772,12 @@ async function cargarMaquinas() {
       tr.dataset.id = m.id;
       if (!m.activo) tr.classList.add('inactivo');
       tr.innerHTML = `
-        <td class="num">${esc(nombreMaquina(m))}</td>
+        <td class="num">${esc(nombreMaquina(m))}${m.activo ? '' : ' <span class="chip chip-claro">Desactivada</span>'}</td>
         <td>${esc(m.bastidor || '')}</td>
         <td>${esc(m.num_flota || '')}</td>
         <td>${esc(m.cliente_nombre)}</td>
-        <td class="suave">${esc(textoHoras(m.horometro_ultimo))}</td>
-        <td>${m.activo ? '<span class="chip chip-ok">Activa</span>' : '<span class="chip chip-claro">Desactivada</span>'}</td>`;
+        <td>${esc(ESTADOS_MAQUINA[m.estado] || m.estado || '')}${m.num_contrato ? ` <span class="suave">${esc(m.num_contrato)}</span>` : ''}</td>
+        <td class="suave">${esc(textoHoras(m.horometro_ultimo))}</td>`;
       tr.onclick = () => abrirMaquina(m.id);
       filas.append(tr);
     }
@@ -788,6 +790,8 @@ async function cargarMaquinas() {
 
 // Modal de alta (id null) o edición de una máquina. Sin maquinas.gestionar se abre en solo lectura.
 // opciones.cliente preselecciona el propietario (alta desde la ficha del cliente); opciones.alGuardar se llama tras guardar o desactivar.
+// F3-04: tras el alta solo se editan horas y observaciones; el rol administrativo puede "Editar campos bloqueados".
+const CAMPOS_BLOQUEADOS_MAQUINA = ['marca', 'modelo', 'bastidor', 'num_flota', 'estado', 'num_contrato', 'caracteristicas'];
 async function abrirMaquina(id, { cliente = null, alGuardar = null } = {}) {
   let maquina = null;
   if (id) {
@@ -798,39 +802,74 @@ async function abrirMaquina(id, { cliente = null, alGuardar = null } = {}) {
   const avisos = ref('avisos', nodo);
   const guardar = ref('guardar', nodo);
   const btnActivo = ref('desactivar', nodo);
+  const btnDesbloquear = ref('desbloquear', nodo);
   const selClientes = ref('clientes', nodo);
+  const selEstado = ref('estado', nodo);
   const editable = puede('maquinas.gestionar');
+  let desbloqueado = !maquina; // en el alta todo es editable
   ref('titulo', nodo).textContent = maquina ? nombreMaquina(maquina) : 'Nueva máquina';
 
-  // Selector de cliente: solo activos (a un cliente de baja no se le asignan máquinas). Si la máquina ya es de un
-  // cliente desactivado se muestra ese cliente marcado, para poder seguir editándola, pero no se puede elegir otro de baja.
+  // Selector de cliente: activos (incluidos los antiguos, que pueden volver); las bajas heredadas no, salvo la propia.
   let clientes = [];
   let seleccionado = maquina ? String(maquina.cliente_id) : (cliente ? String(cliente.id) : '');
   const pintarClientes = (filtro = '') => {
     const f = filtro.trim().toLowerCase();
     selClientes.innerHTML = '';
-    if (maquina && !maquina.cliente_activo) selClientes.insertAdjacentHTML('beforeend', `<option value="${maquina.cliente_id}">${esc(maquina.cliente_nombre)} · desactivado</option>`);
+    if (maquina && !maquina.cliente_activo) selClientes.insertAdjacentHTML('beforeend', `<option value="${maquina.cliente_id}">${esc(maquina.cliente_nombre)} · de baja</option>`);
     for (const c of clientes) {
       if (f && !c.nombre.toLowerCase().includes(f) && !(c.cif || '').toLowerCase().includes(f)) continue;
       selClientes.insertAdjacentHTML('beforeend', `<option value="${c.id}">${esc(c.nombre)}${c.cif ? ' · ' + esc(c.cif) : ''}</option>`);
     }
     if (seleccionado && $(`option[value="${seleccionado}"]`, selClientes)) selClientes.value = seleccionado;
   };
-  // ?todos=1 para que un cliente antiguo (sin factura en 3 años) también pueda recibir máquinas; las bajas heredadas no.
   try { clientes = (await api('/api/clientes?todos=1')).filter((c) => c.activo); } catch (e) { mostrarErrorAccion(e, avisos); }
   pintarClientes();
   ref('buscar-cliente', nodo).oninput = (e) => pintarClientes(e.target.value);
   selClientes.onchange = () => { seleccionado = selClientes.value; };
 
+  // Nº de contrato solo si la máquina no es de cliente final.
+  const ajustarContrato = () => {
+    const sinContrato = selEstado.value === 'cliente_final';
+    form.elements.num_contrato.disabled = sinContrato || !desbloqueado || !editable;
+    if (sinContrato) form.elements.num_contrato.value = '';
+  };
+  selEstado.onchange = ajustarContrato;
+
+  // Bloqueo tras el alta: solo horas y observaciones; administrativo puede desbloquear para corregir.
+  const aplicarBloqueo = () => {
+    for (const campo of CAMPOS_BLOQUEADOS_MAQUINA) form.elements[campo].disabled = !desbloqueado;
+    form.elements.num_flota.readOnly = !desbloqueado;
+    ref('buscar-cliente', nodo).disabled = !desbloqueado;
+    selClientes.disabled = !desbloqueado;
+    ajustarContrato();
+    ref('aviso-bloqueo', nodo).classList.toggle('oculto', desbloqueado || !editable);
+  };
+
   if (maquina) {
-    for (const campo of ['marca', 'modelo', 'bastidor', 'num_flota', 'observaciones']) form.elements[campo].value = maquina[campo] || '';
+    for (const campo of ['marca', 'modelo', 'bastidor', 'num_flota', 'num_contrato', 'caracteristicas', 'observaciones']) form.elements[campo].value = maquina[campo] || '';
+    selEstado.value = maquina.estado || 'cliente_final';
     form.elements.horometro_ultimo.value = maquina.horometro_ultimo == null ? '' : maquina.horometro_ultimo;
     ref('meta', nodo).innerHTML = `
+      <div><span>Estado</span>${esc(ESTADOS_MAQUINA[maquina.estado] || maquina.estado || '—')}${maquina.num_contrato ? ' · contrato ' + esc(maquina.num_contrato) : ''}</div>
       <div><span>Código Karve</span>${esc(maquina.karve_id || '—')}</div>
       <div><span>O.T.</span>${maquina.num_ot}</div>
       <div><span>Alta</span>${esc(fecha(maquina.creado))}${maquina.activo ? '' : ' · <b>desactivada</b>'}</div>`;
+    if (editable) {
+      aplicarBloqueo();
+      if (S.sesion.usuario.rol === 'administrativo') {
+        btnDesbloquear.classList.remove('oculto');
+        btnDesbloquear.onclick = () => {
+          desbloqueado = true;
+          aplicarBloqueo();
+          btnDesbloquear.classList.add('oculto');
+          aviso(avisos, 'Modo corrección: estás editando campos bloqueados de la máquina. Se guardan al pulsar Guardar.', 'conflicto');
+          form.elements.marca.focus();
+        };
+      }
+    }
   } else {
     ref('meta', nodo).classList.add('oculto');
+    ajustarContrato();
   }
   if (!editable) {
     for (const el of $$('input, select, textarea', form)) el.disabled = true;
@@ -864,20 +903,23 @@ async function abrirMaquina(id, { cliente = null, alGuardar = null } = {}) {
   form.onsubmit = async (e) => {
     e.preventDefault();
     if (!editable) return;
-    const clienteId = Number(selClientes.value);
-    if (!clienteId) { aviso(avisos, 'Elige el cliente propietario', 'error'); return; }
-    guardar.disabled = true;
     const v = (n) => form.elements[n].value.trim() || null;
-    const body = { marca: v('marca'), modelo: v('modelo'), bastidor: v('bastidor'), num_flota: v('num_flota'), horometro_ultimo: v('horometro_ultimo'), observaciones: v('observaciones') };
-    // cliente_id solo si cambia: así se edita una máquina cuyo cliente ya está de baja sin que la API lo rechace.
-    if (!maquina || clienteId !== maquina.cliente_id) body.cliente_id = clienteId;
+    const body = { horometro_ultimo: v('horometro_ultimo'), observaciones: v('observaciones') };
+    if (desbloqueado) {
+      const clienteId = Number(selClientes.value);
+      if (!clienteId) { aviso(avisos, 'Elige el cliente propietario', 'error'); return; }
+      Object.assign(body, { marca: v('marca'), modelo: v('modelo'), bastidor: v('bastidor'), estado: selEstado.value, num_contrato: selEstado.value === 'cliente_final' ? null : v('num_contrato'), caracteristicas: v('caracteristicas') });
+      if (maquina) body.num_flota = v('num_flota');
+      if (!maquina || clienteId !== maquina.cliente_id) body.cliente_id = clienteId; // solo si cambia (clientes de baja heredados)
+    }
+    guardar.disabled = true;
     try {
       if (maquina) {
         await api(`/api/maquinas/${maquina.id}`, { method: 'PUT', body });
         toast('Máquina guardada', 'ok');
       } else {
         const nueva = await api('/api/maquinas', { method: 'POST', body });
-        toast(`Máquina "${nombreMaquina(nueva)}" creada`, 'ok');
+        toast(`Máquina "${nombreMaquina(nueva)}" creada con nº de flota ${nueva.num_flota}`, 'ok');
       }
       cerrarModal(nodo);
       refrescarVista();

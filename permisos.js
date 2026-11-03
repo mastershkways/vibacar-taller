@@ -15,16 +15,21 @@
 //   clientes_propios → solo las O.T. de sus clientes (relación vendedor↔cliente, pendiente de Karve)
 // ---------------------------------------------------------------------------
 // `grupo` agrupa los roles en la pantalla de usuarios: tecnico (interno) | sat (externo) | oficina (el resto).
+// F3-05 (2026-11-02): roles del Field Service Management. `alcance` sat = O.T. de SAT externos o sin técnico.
 const ROLES = {
-  admontaller: { nombre: 'Admontaller / Responsable', alcance: 'todo',             grupo: 'oficina', descripcion: 'Control total: Kanban, planificación, asignaciones, usuarios' },
-  tecnico:     { nombre: 'Técnico / Operario',        alcance: 'asignadas',        grupo: 'tecnico', descripcion: 'Tablet: sus O.T., tiempos, checklist, fotos, firma' },
-  sat:         { nombre: 'SAT externo',               alcance: 'asignadas',        grupo: 'sat',     descripcion: 'Operario externo: solo sus asignaciones' },
-  recambista:  { nombre: 'Recambista / Almacén',      alcance: 'todo',             grupo: 'oficina', descripcion: 'Entrada de material y repuestos por O.T.' },
-  financiero:  { nombre: 'Financiero / Administración', alcance: 'todo',           grupo: 'oficina', descripcion: 'Facturación, albaranes, Nº de pedido, visto bueno factura' },
-  comercial:   { nombre: 'Comercial / Vendedor',      alcance: 'clientes_propios', grupo: 'oficina', descripcion: 'Solo lectura del estado de las O.T. de sus clientes' },
-  // F2-05: jefe de ventas. Mismos permisos que comercial, pero ve los clientes y O.T. de todos los comerciales (y los sin comercial).
-  comercial_jefe: { nombre: 'Jefe comercial',         alcance: 'todo',             grupo: 'oficina', descripcion: 'Solo lectura del estado de las O.T. de todos los clientes' },
+  administrativo: { nombre: 'Administrativo',                   alcance: 'todo',             grupo: 'oficina', descripcion: 'Ve y edita todo, incluidos los usuarios; único que corrige los campos bloqueados de una máquina' },
+  responsable_st: { nombre: 'Responsable de Servicio Técnico',  alcance: 'todo',             grupo: 'oficina', descripcion: 'Toda la operativa: O.T., planificador, asignaciones y maestros; no gestiona usuarios' },
+  gerencia:       { nombre: 'Gerencia',                         alcance: 'todo',             grupo: 'oficina', descripcion: 'Solo lectura de todo (Tablero, O.T., maestros, informes)' },
+  gestor_sat:     { nombre: 'Gestor de SAT externos',           alcance: 'sat',              grupo: 'oficina', descripcion: 'Opera y aprueba solo las O.T. de SAT externos (y las que aún no tienen técnico)' },
+  tecnico:        { nombre: 'Técnico / Operario',               alcance: 'asignadas',        grupo: 'tecnico', descripcion: 'Tablet: sus O.T., tiempos, checklist, fotos, firma' },
+  sat:            { nombre: 'SAT externo',                      alcance: 'asignadas',        grupo: 'sat',     descripcion: 'Operario externo: solo sus asignaciones' },
+  recambista:     { nombre: 'Recambista / Almacén',             alcance: 'todo',             grupo: 'oficina', descripcion: 'Entrada de material y repuestos por O.T.' },
+  comercial:      { nombre: 'Comercial / Vendedor',             alcance: 'clientes_propios', grupo: 'oficina', descripcion: 'Solo lectura del estado de las O.T. de sus clientes' },
+  comercial_jefe: { nombre: 'Jefe comercial',                   alcance: 'todo',             grupo: 'oficina', descripcion: 'Solo lectura del estado de las O.T. de todos los clientes' },
 };
+
+// Roles anteriores a F3-05 → nuevos. db.js los migra al arrancar (usuarios y transiciones).
+const ROLES_ANTIGUOS = { admontaller: 'responsable_st', financiero: 'administrativo' };
 
 // ---------------------------------------------------------------------------
 // Acciones. Nombre "zona.accion" y descripción (sirve para documentar y para la pantalla de usuarios).
@@ -59,12 +64,15 @@ const ACCIONES = {
 };
 
 // ---------------------------------------------------------------------------
-// Matriz rol → acciones. admontaller tiene todas; el resto, lista explícita.
+// Matriz rol → acciones. administrativo tiene todas; responsable_st todas menos usuarios; el resto, lista explícita.
 // ---------------------------------------------------------------------------
 const TODAS = Object.keys(ACCIONES);
 
 const MATRIZ = {
-  admontaller: TODAS,
+  administrativo: TODAS,
+  responsable_st: TODAS.filter((a) => a !== 'usuarios.gestionar'),
+  gerencia: ['ot.ver', 'clientes.ver', 'maquinas.ver', 'kanban.ver', 'informes.ver'],
+  gestor_sat: ['ot.ver', 'ot.crear', 'ot.editar', 'ot.cambiar_estado', 'ot.asignar', 'ot.aprobar_asignacion', 'clientes.ver', 'maquinas.ver', 'kanban.ver'],
 
   tecnico: [
     'ot.ver', 'ot.cambiar_estado', 'ot.tiempos', 'ot.checklist', 'ot.fotos', 'ot.firmar',
@@ -79,11 +87,6 @@ const MATRIZ = {
   recambista: [
     'ot.ver', 'ot.cambiar_estado', 'ot.repuestos',
     'clientes.ver', 'maquinas.ver', 'kanban.ver',
-  ],
-
-  financiero: [
-    'ot.ver', 'ot.cambiar_estado', 'ot.facturacion',
-    'clientes.ver', 'clientes.gestionar', 'maquinas.ver', 'kanban.ver', 'informes.ver',
   ],
 
   comercial: [
@@ -145,4 +148,4 @@ function requierePermiso(...acciones) {
   };
 }
 
-module.exports = { ROLES, ACCIONES, MATRIZ, esRolValido, puede, permisosDe, alcanceDe, describirRol, requierePermiso };
+module.exports = { ROLES, ROLES_ANTIGUOS, ACCIONES, MATRIZ, esRolValido, puede, permisosDe, alcanceDe, describirRol, requierePermiso };

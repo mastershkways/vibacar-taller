@@ -10,7 +10,7 @@ Aplicación web para gestionar las **Órdenes de Trabajo (O.T.)** de reparación
 - **Recambios**: el almacén vincula los repuestos usados a cada O.T.
 - **Cierre y facturación**: parte de trabajo, albarán y reclamación automática del nº de pedido al cliente cuando lo exige.
 - **Clientes**: ficha con razón social, NIF/CIF, teléfono, dirección, contacto de compras, contacto técnico (recibe los partes), correo de envío de facturas, fecha de la última factura y comercial responsable; buscador rápido. Un cliente sin factura en los últimos 3 años pasa a "antiguo" y deja de salir en la lista (se puede ver con "Todos").
-- **Máquinas**: ficha con marca, modelo, bastidor, nº de flota, horas y observaciones, siempre de un cliente activo; buscador por cualquiera de esos datos o por cliente; desde la ficha del cliente se ven y se dan de alta sus máquinas. Tampoco se borran: se desactivan.
+- **Máquinas**: ficha con marca, modelo, bastidor, estado (propia, rent to rent, subalquilada o de cliente final), nº de contrato, características técnicas para el mecánico, horas y observaciones. El nº de flota lo asigna la aplicación al crearla (`F-26-0001`, correlativo por año; los antiguos de Karve se respetan). Tras el alta solo se cambian las horas y las observaciones; un administrativo puede corregir el resto. Desde la ficha del cliente se ven y se dan de alta sus máquinas. No se borran: se desactivan.
 - **Usuarios**: el administrador da de alta al personal (técnicos internos, SAT externos y oficina) con su usuario, rol y contraseña, y puede cambiarla o desactivar a quien se marcha sin perder su historial. Cada técnico lleva su código de operario en Karve para imputar horas más adelante.
 - **Integración con Karve** (el ERP) para inventario, clientes, máquinas y numeración. Hasta que llegue, los clientes y las máquinas se dan de alta a mano y la pantalla indica si cada uno es manual o viene de Karve.
 - **Ayuda de IA**: redacta el parte para el cliente a partir de las notas del técnico y sugiere mantenimientos preventivos.
@@ -19,10 +19,12 @@ Aplicación web para gestionar las **Órdenes de Trabajo (O.T.)** de reparación
 
 | Rol | Qué ve |
 |---|---|
-| Admontaller / Responsable | Todo: Kanban, planificación, aprobación de asignaciones |
+| Administrativo | Ve y edita todo, gestiona usuarios y es el único que corrige los campos bloqueados de una máquina |
+| Responsable de Servicio Técnico | Toda la operativa: Tablero, planificación, asignaciones y maestros (no gestiona usuarios) |
+| Gerencia | Solo lectura de todo |
+| Gestor de SAT externos | Opera y aprueba solo las O.T. de SAT externos (y las que aún no tienen técnico) |
 | Técnico / Operario | Sus O.T. en la tablet |
 | Recambista / Almacén | Entrada de material y repuestos por O.T. |
-| Financiero / Administración | Facturación, albaranes, nº de pedido |
 | Comercial | Estado de las O.T. de los clientes de su cartera (solo lectura): solo ve esos clientes, sus máquinas y sus O.T., también en el Tablero |
 | Jefe comercial | Lo mismo que el comercial, pero de todos los clientes (los de cualquier comercial y los que no tienen) |
 | SAT externo | Solo sus asignaciones |

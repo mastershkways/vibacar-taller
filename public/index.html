@@ -92,12 +92,12 @@
     <button class="btn btn-primario" data-accion="nueva-maquina" data-permiso="maquinas.gestionar">+ Nueva máquina</button>
   </div>
   <form class="filtros" data-ref="filtros">
-    <div class="ancho"><label>Buscar</label><input type="search" name="q" placeholder="Marca, modelo, bastidor, nº de flota, cliente o código Karve" autocomplete="off"></div>
+    <div class="ancho"><label>Buscar</label><input type="search" name="q" placeholder="Marca, modelo, bastidor, nº de flota, nº de contrato, cliente o código Karve" autocomplete="off"></div>
     <div><label>Mostrar</label><select name="todos"><option value="">Activas</option><option value="1">Todas</option></select></div>
   </form>
   <div class="tabla-envoltorio">
     <table class="tabla">
-      <thead><tr><th>Máquina</th><th>Bastidor</th><th>Nº flota</th><th>Cliente</th><th>Horas</th><th>Estado</th></tr></thead>
+      <thead><tr><th>Máquina</th><th>Bastidor</th><th>Nº flota</th><th>Cliente</th><th>Estado</th><th>Horas</th></tr></thead>
       <tbody data-ref="filas"></tbody>
     </table>
   </div>
@@ -296,9 +296,10 @@
       </div>
       <div class="modal-cuerpo">
         <div data-ref="avisos"></div>
+        <div class="aviso aviso-info oculto" data-ref="aviso-bloqueo">Tras el alta solo se cambian las horas y las observaciones. El resto de campos los corrige un administrativo.</div>
         <form data-ref="form">
           <label>Cliente propietario</label>
-          <input type="search" data-ref="buscar-cliente" placeholder="Escribe para filtrar… (solo clientes activos)" autocomplete="off">
+          <input type="search" data-ref="buscar-cliente" placeholder="Escribe para filtrar…" autocomplete="off">
           <select name="cliente_id" data-ref="clientes" size="4" class="separado" required></select>
           <div class="fila">
             <div><label>Marca</label><input type="text" name="marca" maxlength="100" autocomplete="off"></div>
@@ -306,8 +307,14 @@
           </div>
           <div class="fila">
             <div><label>Bastidor / nº de serie</label><input type="text" name="bastidor" maxlength="100" autocomplete="off" class="mayusculas"></div>
-            <div><label>Nº de flota (del cliente)</label><input type="text" name="num_flota" maxlength="50" autocomplete="off"></div>
+            <div><label>Nº de flota</label><input type="text" name="num_flota" maxlength="50" autocomplete="off" placeholder="Se asigna al guardar (F-AA-0000)" readonly></div>
           </div>
+          <div class="fila">
+            <div><label>Estado</label><select name="estado" data-ref="estado"><option value="cliente_final">Cliente final</option><option value="propia">Propia</option><option value="rent_to_rent">Rent to Rent</option><option value="subalquilada">Subalquilada</option></select></div>
+            <div><label>Nº de contrato</label><input type="text" name="num_contrato" maxlength="100" autocomplete="off" placeholder="Solo si no es cliente final"></div>
+          </div>
+          <label>Características técnicas (para el mecánico)</label>
+          <textarea name="caracteristicas" rows="3" maxlength="4000" placeholder="Motor, potencia, capacidades, aceites, pares de apriete, particularidades…"></textarea>
           <label>Horas de máquina (último horómetro)</label>
           <input type="number" name="horometro_ultimo" min="0" step="0.1" inputmode="decimal" autocomplete="off">
           <label>Observaciones</label>
@@ -316,6 +323,7 @@
           <div class="acciones">
             <button class="btn btn-primario" type="submit" data-ref="guardar">Guardar</button>
             <button class="btn" type="button" data-accion="cerrar">Cancelar</button>
+            <button class="btn oculto" type="button" data-ref="desbloquear" title="Solo administrativo: corregir un alta equivocada">Editar campos bloqueados</button>
             <button class="btn btn-peligro derecha oculto" type="button" data-ref="desactivar">Desactivar</button>
           </div>
         </form>

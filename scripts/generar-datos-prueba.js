@@ -10,6 +10,7 @@
 // Los usuarios de prueba que falten se crean con la contraseña que se muestra al final.
 
 const { db, ahora, hashClave } = require('../db');
+const { siguienteNumeroFlota } = require('../numeracion');
 const { siguienteNumeroOT } = require('../numeracion');
 
 const args = process.argv.slice(2);
@@ -31,7 +32,10 @@ const USUARIOS = [
   ['tecnico3',   'Unai Larrañaga',    'tecnico',    'unai@vibacar-pruebas.local',  'OP009', 0], // se marchó: desactivado, sin O.T.
   ['sat1',       'SAT Bizkaia (ext.)','sat',        'sat@vibacar-pruebas.local',   'OP031', 1],
   ['recambista1','Jon Arrieta',       'recambista', 'jon@vibacar-pruebas.local',   null,    1],
-  ['finanzas1',  'Leire Mendizabal',  'financiero', 'leire@vibacar-pruebas.local', null,    1],
+  ['finanzas1',  'Leire Mendizabal',  'administrativo', 'leire@vibacar-pruebas.local', null, 1], // F3-05: antes financiero
+  ['responsable1', 'Aitor Zelaia',    'responsable_st', 'aitor@vibacar-pruebas.local', null, 1], // F3-05
+  ['gerencia1',  'Amaia Olaizola',    'gerencia',   'amaia@vibacar-pruebas.local', null,    1], // F3-05: solo lectura
+  ['gestorsat1', 'Oihane Zabala',     'gestor_sat', 'oihane@vibacar-pruebas.local', null,   1], // F3-05: O.T. de SAT
   ['comercial1', 'Iker Goikoetxea',   'comercial',  'iker@vibacar-pruebas.local',  null,    1],
   ['jefeventas1','Nerea Olabarria',    'comercial_jefe', 'nerea@vibacar-pruebas.local', null, 1], // F2-05: ve la cartera de todos
 ];
@@ -82,6 +86,18 @@ const MAQUINAS = {
   9: [['Hyster', 'H16XM-12', 'HYSH16XM001234', 'Z-31', 11200], ['Konecranes', 'SMV 4531', 'KCSMV4531000123', 'Z-07', 9420], ['Wacker Neuson', 'EZ80', 'WNCEZ80A00012345', null, 640]],
   10: [['Hitachi', 'ZX350LC-6', 'HCM1ZX350K00123', null, 10300]],
   11: [],
+};
+// F3-04: estado y nº de contrato por bastidor (el resto: cliente_final sin contrato) y características técnicas de algunas.
+const ESTADO_MAQUINA = {
+  VCEC220EK00312345: ['rent_to_rent', 'RR-2025-014'], CAT0320CKYBP01234: ['propia', 'AL-2024-031'], KMTWA320C01V12345: ['propia', 'AL-2024-032'],
+  W09LTM1050001234: ['subalquilada', 'SUB-2026-003'], KMTPC210C01K12345: ['rent_to_rent', 'RR-2026-007'], VCEL90HC00123456: ['propia', 'AL-2025-019'],
+  HYSH16XM001234: ['rent_to_rent', 'RR-2025-041'], HCM1ZX350K00123: ['subalquilada', 'SUB-2025-011'],
+};
+const CARACTERISTICAS = {
+  VCEC220EK00312345: 'Motor Volvo D6J 129 kW. Peso 22,5 t. Aceite hidráulico ISO VG 46 (300 l). Pares de apriete de rodillos 400 Nm.',
+  CAT0320CKYBP01234: 'Motor Cat C4.4 122 kW. Cuchara 1,2 m³. Sistema hidráulico 2 bombas. Filtro de aire doble.',
+  W09LTM1050001234: 'Grúa 50 t, pluma 38 m. Motor Daimler OM 906 LA. Presión de neumáticos 9 bar. Lubricación de la corona cada 50 h.',
+  HYSH16XM001234: 'Carretilla 16 t. Motor Cummins QSB6.7. Neumáticos 12.00-24 macizos. Aceite de transmisión Dexron III.',
 };
 // Observaciones de algunas máquinas (por bastidor) y máquinas desactivadas (baja lógica).
 const OBSERVACIONES = {
@@ -168,8 +184,8 @@ if ((nClientes || nOT) && !limpiar && !anadir) {
   process.exit(1);
 }
 
-const admin = db.prepare("SELECT id, nombre FROM usuarios WHERE rol = 'admontaller' AND activo = 1 ORDER BY id LIMIT 1").get();
-if (!admin) { console.error('No hay ningún administrador (admontaller) activo. Arranca el servidor una vez con APP_USUARIO/APP_CLAVE.'); process.exit(1); }
+const admin = db.prepare("SELECT id, nombre FROM usuarios WHERE rol IN ('administrativo', 'responsable_st') AND activo = 1 ORDER BY id LIMIT 1").get();
+if (!admin) { console.error('No hay ningún administrativo ni responsable activo. Arranca el servidor una vez con APP_USUARIO/APP_CLAVE.'); process.exit(1); }
 
 const resumen = { usuariosCreados: [], clientes: 0, maquinas: 0, ots: 0, porFase: {} };
 
@@ -215,7 +231,7 @@ const generar = db.transaction(() => {
   db.prepare('UPDATE clientes SET comercial_id = ? WHERE id IN (?, ?)').run(usuarioPor.comercial1.id, clienteIds[1], clienteIds[3]);
 
   // Máquinas
-  const insMaquina = db.prepare('INSERT INTO maquinas (cliente_id, marca, modelo, bastidor, num_flota, horometro_ultimo, karve_id, origen, observaciones, activo, creado) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)');
+  const insMaquina = db.prepare('INSERT INTO maquinas (cliente_id, marca, modelo, bastidor, num_flota, horometro_ultimo, karve_id, origen, observaciones, activo, estado, num_contrato, caracteristicas, creado) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)');
   const maquinaIds = {};
   for (const [idx, lista] of Object.entries(MAQUINAS)) {
     maquinaIds[idx] = [];
@@ -224,7 +240,9 @@ const generar = db.transaction(() => {
       const existente = db.prepare('SELECT id FROM maquinas WHERE bastidor = ?').get(bastidor);
       if (existente) { maquinaIds[idx].push(existente.id); return; }
       const karveId = cliente[6] === 'karve' ? `M${String(100 + Number(idx) * 10 + j).padStart(6, '0')}` : null;
-      const info = insMaquina.run(clienteIds[idx], marca, modelo, bastidor, flota, horas, karveId, karveId ? 'karve' : 'manual', OBSERVACIONES[bastidor] || null, MAQUINAS_INACTIVAS.has(bastidor) ? 0 : 1, fmt(fechaHace(55 - Number(idx) * 3, 10, j * 11)));
+      const [estado, contrato] = ESTADO_MAQUINA[bastidor] || ['cliente_final', null];
+      // Sin nº de flota del cliente → se genera el de Vibacar (F-YY-XXXX); los de Karve se respetan.
+      const info = insMaquina.run(clienteIds[idx], marca, modelo, bastidor, flota || siguienteNumeroFlota(), horas, karveId, karveId ? 'karve' : 'manual', OBSERVACIONES[bastidor] || null, MAQUINAS_INACTIVAS.has(bastidor) ? 0 : 1, estado, contrato, CARACTERISTICAS[bastidor] || null, fmt(fechaHace(55 - Number(idx) * 3, 10, j * 11)));
       maquinaIds[idx].push(info.lastInsertRowid);
       resumen.maquinas++;
     });
