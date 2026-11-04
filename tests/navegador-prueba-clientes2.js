@@ -74,7 +74,7 @@ const cabeceras = (p) => evaluar(p, `[...document.querySelectorAll('.tabla thead
   ok('admin: cabecera Tablero · Listado · Maestros · Usuarios (Clientes y Máquinas ya no van sueltas)', JSON.stringify(nav) === JSON.stringify(['Tablero', 'Listado', 'Maestros', 'Usuarios']), nav.join(' · '));
   ok('Maestros: lista cerrada al cargar', await evaluar(p, `getComputedStyle(document.querySelector('#nav .menu-lista')).display === 'none'`));
   await evaluar(p, `document.querySelector('#nav .menu-boton').click()`);
-  ok('Maestros: al pulsar se abre con Clientes y Máquinas, visible (position fixed, no recortada)', await esperarHasta(p, `(() => { const l = document.querySelector('#nav .menu-lista'); const r = l.getBoundingClientRect(); return getComputedStyle(l).display === 'flex' && [...l.querySelectorAll('button')].map(b => b.textContent).join() === 'Clientes,Máquinas' && r.top > 40 && r.width > 100; })()`));
+  ok('Maestros: al pulsar se abre con Clientes y Máquinas, visible (position fixed, no recortada)', await esperarHasta(p, `(() => { const l = document.querySelector('#nav .menu-lista'); const r = l.getBoundingClientRect(); return getComputedStyle(l).display === 'flex' && [...l.querySelectorAll('button')].slice(0, 2).map(b => b.textContent).join() === 'Clientes,Máquinas' && r.top > 40 && r.width > 100; })()`));
   await captura(p, '01-menu-maestros');
   await evaluar(p, `document.body.click()`);
   ok('Maestros: clic fuera lo cierra', await esperarHasta(p, `getComputedStyle(document.querySelector('#nav .menu-lista')).display === 'none'`));

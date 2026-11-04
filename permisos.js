@@ -58,6 +58,7 @@ const ACCIONES = {
   'usuarios.gestionar':     'Crear, editar y desactivar usuarios',
   'estados.gestionar':      'Mantener fases, estados y transiciones',
   'contadores.gestionar':   'Fijar el contador de numeración de O.T.',
+  'karve.sincronizar':      'Lanzar la sincronización de clientes y máquinas desde Karve',
   // Vistas
   'kanban.ver':             'Ver el tablero Kanban',
   'informes.ver':           'Ver informes y estadísticas',

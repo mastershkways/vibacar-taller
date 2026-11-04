@@ -277,6 +277,10 @@
             <div class="subtitulo"><span>Máquinas</span><button class="btn btn-pequeno" type="button" data-ref="nueva-maquina" data-permiso="maquinas.gestionar">+ Máquina</button></div>
             <ul class="lista-compacta" data-ref="maquinas"></ul>
           </div>
+          <div class="separado oculto" data-ref="bloque-contactos">
+            <div class="subtitulo"><span>Contactos (de Karve)</span></div>
+            <ul class="lista-compacta" data-ref="contactos"></ul>
+          </div>
           <div class="acciones">
             <button class="btn btn-primario" type="submit" data-ref="guardar">Guardar</button>
             <button class="btn" type="button" data-accion="cerrar">Cancelar</button>
@@ -360,6 +364,27 @@
             <button class="btn btn-peligro derecha oculto" type="button" data-ref="desactivar">Desactivar</button>
           </div>
         </form>
+      </div>
+    </div>
+  </div>
+</template>
+<template id="tpl-karve">
+  <div class="modal-fondo">
+    <div class="modal estrecho">
+      <div class="modal-cabecera">
+        <h2>Sincronización con Karve</h2>
+        <button class="cerrar" type="button" data-accion="cerrar" aria-label="Cerrar">×</button>
+      </div>
+      <div class="modal-cuerpo">
+        <div data-ref="avisos"></div>
+        <div class="datos" data-ref="resumen"></div>
+        <div class="separado" data-ref="bloque-alertas">
+          <div class="subtitulo"><span>Avisos</span></div>
+          <ul class="lista-compacta" data-ref="alertas"></ul>
+        </div>
+        <div class="acciones">
+          <button class="btn btn-primario" type="button" data-accion="cerrar">Cerrar</button>
+        </div>
       </div>
     </div>
   </div>

@@ -75,6 +75,10 @@ if (-not $SinNavegador) {
 Ciclo 'clientes2' @('cliente-prueba-clientes2.js', 'navegador-prueba-clientes2.js')
 Ciclo 'maquinas2' @('cliente-prueba-maquinas2.js', 'navegador-prueba-maquinas2.js', 'navegador-colores.js')
 
+if (Select-String -Path (Join-Path $raiz '.env') -Pattern '^KARVE_COPIA_CONNECTION_STRING=' -Quiet -ErrorAction SilentlyContinue) {
+  Ciclo 'karve' @('cliente-prueba-karve.js', 'navegador-prueba-karve.js')
+} else { $script:resumen += 'ciclo karve : omitido (sin KARVE_COPIA_CONNECTION_STRING en el .env)' }
+
 Write-Host "`n### Migración de roles (base sintética)" -ForegroundColor Green
 $env:RUTA_BD = Join-Path $tmp 'migracion.db'; $env:APP_USUARIO = 'jefe'
 Ejecutar-Script 'prueba-migracion-roles.js'

@@ -191,3 +191,14 @@ node scripts/karve-explorar.js --tabla CV.kv_vClientes   columnas y muestra de u
 ```
 
 Si `npm start` falla con "Una directiva de Control de aplicaciones bloqueó este archivo" (`odbc.node`), es el Smart App Control de Windows: hay que permitirlo.
+
+### Sincronización de clientes, contactos y máquinas
+
+Desde la aplicación: Maestros → "⟳ Sincronizar Karve" (administrativo y responsable de servicio técnico). Desde consola o el Programador de tareas de Windows (cada noche):
+
+```
+node scripts/karve-sincronizar.js             sincroniza (código de salida 0 si va bien)
+node scripts/karve-sincronizar.js --simular   solo informa, no escribe
+```
+
+Reglas: Karve manda en los datos que trae (nombre, NIF, teléfono, email, dirección, alta, baja, comercial y fecha de la última factura); lo que se rellena a mano en la ficha (contactos principales, zona, nº de contrato, características, observaciones, estado reclasificado de una máquina) no se pisa. Los contactos de Karve van a la tabla `cliente_contactos` y se ven en la ficha del cliente; los tres huecos de la ficha se rellenan solos por el cargo del contacto si estaban vacíos. Las máquinas se vinculan al cliente **actual** de Karve y reciben un nº de flota `F-AA-0000` al crearse; los bastidores repetidos o vacíos solo generan un aviso. Cada ejecución queda registrada en la tabla `sincronizaciones`.

@@ -151,6 +151,7 @@ header.cabecera {
 .cabecera nav .menu.abierto .menu-lista { display: flex; }
 .cabecera nav .menu-lista button { text-align: left; width: 100%; }
 .cabecera nav .menu-lista button.activo::after { display: none; }
+.cabecera nav .menu-lista button.menu-extra { border-top: 1px solid var(--borde); border-radius: 0; margin-top: 4px; padding-top: 10px; color: var(--naranja-texto); }
 .cabecera .usuario { font-size: 13px; color: var(--texto-suave); text-align: right; line-height: 1.25; white-space: nowrap; }
 .cabecera .usuario b { display: block; color: var(--texto); font-size: 14px; }
 .cabecera form { margin: 0; }

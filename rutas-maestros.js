@@ -8,6 +8,8 @@ const { db, ahora, hashClave } = require('./db');
 const { requierePermiso, esRolValido, alcanceDe, ROLES } = require('./permisos');
 const { ErrorHttp, texto, entero, booleano, enumerado, idRuta } = require('./validar');
 const { siguienteNumeroFlota } = require('./numeracion');
+const karve = require('./karve');
+const sincronizacion = require('./karve-sincronizar');
 
 // UPDATE parcial: solo las columnas presentes en `cambios` (valor undefined = no tocar).
 function actualizarParcial(tabla, id, cambios) {
@@ -34,7 +36,8 @@ module.exports = function montarRutasMaestros(app) {
   // se gestiona desde la API: la columna se conserva y las bajas heredadas solo aparecen con ?todos=1.
   // -------------------------------------------------------------------------
   const soloMisClientes = (req) => alcanceDe(req.usuario.rol) === 'clientes_propios';
-  const ANTIGUO_SQL = "(c.ultima_factura IS NOT NULL AND c.ultima_factura < date('now', '-3 years'))";
+  // F3.5-04: antiguo = última factura hace más de 3 años, o sin factura y alta (creado) hace más de 3 años.
+  const ANTIGUO_SQL = "((c.ultima_factura IS NOT NULL AND c.ultima_factura < date('now', '-3 years')) OR (c.ultima_factura IS NULL AND c.creado < date('now', '-3 years')))";
   const COLUMNAS_CLIENTE = `c.*, v.nombre AS comercial_nombre, CASE WHEN ${ANTIGUO_SQL} THEN 1 ELSE 0 END AS antiguo`;
   const leerClienteBD = (id) => db.prepare(`SELECT ${COLUMNAS_CLIENTE} FROM clientes c LEFT JOIN usuarios v ON v.id = c.comercial_id WHERE c.id = ?`).get(id);
 
@@ -49,7 +52,7 @@ module.exports = function montarRutasMaestros(app) {
       sql += ' AND (c.nombre LIKE ? OR c.cif LIKE ? OR c.karve_id LIKE ? OR c.email LIKE ? OR c.telefono LIKE ? OR c.compras_nombre LIKE ? OR c.tecnico_nombre LIKE ?)';
       p.push(`%${q}%`, `%${q}%`, `%${q}%`, `%${q}%`, `%${q}%`, `%${q}%`, `%${q}%`);
     }
-    sql += ` ORDER BY c.activo DESC, ${ANTIGUO_SQL} ASC, c.nombre COLLATE NOCASE LIMIT 500`; // antiguos y bajas al final
+    sql += ` ORDER BY c.activo DESC, ${ANTIGUO_SQL} ASC, c.nombre COLLATE NOCASE LIMIT 5000`; // antiguos y bajas al final
     res.json(db.prepare(sql).all(...p));
   });
 
@@ -64,7 +67,8 @@ module.exports = function montarRutasMaestros(app) {
     const cliente = leerClienteBD(id);
     if (!cliente || (soloMisClientes(req) && cliente.comercial_id !== req.usuario.id)) throw new ErrorHttp(404, 'Cliente no encontrado');
     const maquinas = db.prepare('SELECT * FROM maquinas WHERE cliente_id = ? ORDER BY activo DESC, marca, modelo').all(id);
-    res.json({ ...cliente, maquinas });
+    const contactos = db.prepare('SELECT id, karve_id, nombre, telefono, email, cargo, departamento, activo FROM cliente_contactos WHERE cliente_id = ? ORDER BY activo DESC, nombre COLLATE NOCASE').all(id);
+    res.json({ ...cliente, maquinas, contactos });
   });
 
   const RE_EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -152,7 +156,7 @@ module.exports = function montarRutasMaestros(app) {
       sql += ' AND (m.marca LIKE ? OR m.modelo LIKE ? OR m.bastidor LIKE ? OR m.num_flota LIKE ? OR m.num_contrato LIKE ? OR m.karve_id LIKE ? OR c.nombre LIKE ?)';
       p.push(`%${q}%`, `%${q}%`, `%${q}%`, `%${q}%`, `%${q}%`, `%${q}%`, `%${q}%`);
     }
-    sql += ' ORDER BY m.activo DESC, c.nombre COLLATE NOCASE, m.marca COLLATE NOCASE, m.modelo COLLATE NOCASE LIMIT 500';
+    sql += ' ORDER BY m.activo DESC, c.nombre COLLATE NOCASE, m.marca COLLATE NOCASE, m.modelo COLLATE NOCASE LIMIT 5000';
     res.json(db.prepare(sql).all(...p));
   });
 
@@ -333,6 +337,24 @@ module.exports = function montarRutasMaestros(app) {
     actualizarParcial('usuarios', id, cambios);
     if (cambios.activo === 0) db.prepare('DELETE FROM sesiones WHERE usuario_id = ?').run(id); // expulsar al desactivar
     res.json(leerUsuarioBD(id));
+  });
+
+  // -------------------------------------------------------------------------
+  // Karve (F3.5-03): estado y lanzamiento manual de la sincronización. Solo lectura en Karve; upsert local.
+  // -------------------------------------------------------------------------
+  r.get('/karve/estado', requierePermiso('karve.sincronizar'), (req, res) => {
+    res.json({ configurado: karve.hayConfiguracion('copia'), en_curso: sincronizacion.estaEnCurso(), ultima: sincronizacion.ultimaSincronizacion() });
+  });
+
+  r.post('/karve/sincronizar', requierePermiso('karve.sincronizar'), async (req, res, next) => {
+    if (!karve.hayConfiguracion('copia')) return next(new ErrorHttp(400, 'Falta la cadena de conexión a Karve en el .env'));
+    if (sincronizacion.estaEnCurso()) return next(new ErrorHttp(409, 'Ya hay una sincronización en curso'));
+    try {
+      const resumen = await sincronizacion.sincronizar({ entorno: 'copia', origen: 'manual', usuarioId: req.usuario.id, simular: req.body && req.body.simular === true });
+      res.json(resumen);
+    } catch (e) {
+      next(new ErrorHttp(e.codigo === 'EN_CURSO' ? 409 : 502, `No se ha podido sincronizar con Karve: ${e.message}`));
+    }
   });
 
   app.use('/api', r);

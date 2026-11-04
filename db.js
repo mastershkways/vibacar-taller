@@ -198,6 +198,33 @@ CREATE TABLE IF NOT EXISTS ot_asignaciones (
   nota          TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_ot_asignaciones_ot ON ot_asignaciones(ot_id);
+
+-- Fase 3.5 (F3.5-03): contactos del cliente (todos los de Karve; los 3 principales van en la ficha) y registro de sincronizaciones.
+CREATE TABLE IF NOT EXISTS cliente_contactos (
+  id           INTEGER PRIMARY KEY AUTOINCREMENT,
+  cliente_id   INTEGER NOT NULL REFERENCES clientes(id) ON DELETE CASCADE,
+  karve_id     TEXT    UNIQUE,
+  nombre       TEXT    NOT NULL,
+  telefono     TEXT,
+  email        TEXT,
+  cargo        TEXT,
+  departamento TEXT,
+  activo       INTEGER NOT NULL DEFAULT 1,
+  creado       TEXT    NOT NULL DEFAULT (datetime('now','localtime')),
+  actualizado  TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_cliente_contactos_cliente ON cliente_contactos(cliente_id);
+
+CREATE TABLE IF NOT EXISTS sincronizaciones (
+  id          INTEGER PRIMARY KEY AUTOINCREMENT,
+  inicio      TEXT    NOT NULL,
+  fin         TEXT,
+  origen      TEXT    NOT NULL,              -- manual (botón) | cron (script programado) | prueba
+  usuario_id  INTEGER REFERENCES usuarios(id),
+  estado      TEXT    NOT NULL,              -- ok | error
+  resumen     TEXT,                          -- JSON con contadores y avisos
+  mensaje     TEXT
+);
 `;
 
 // Columnas añadidas después de la primera versión. Formato: [tabla, columna, definición SQL].
@@ -224,6 +251,8 @@ const COLUMNAS_NUEVAS = [
   ['clientes', 'tecnico_email', 'TEXT'],
   ['clientes', 'email_facturas', 'TEXT'],
   ['clientes', 'ultima_factura', 'TEXT'],
+  // Fase 3.5 / F4-03: zona manual del cliente (Bizkaia, Araba, Gipuzkoa, Madrid, otras); la sincronización la precarga desde la provincia de Karve.
+  ['clientes', 'zona', 'TEXT'],
   // Fase 2 (F2-03): maestro de máquinas, mismo espejo de Karve que clientes (origen + karve_id).
   ['maquinas', 'origen', "TEXT NOT NULL DEFAULT 'manual'"],
   // Fase 3 (F3-04): estado de la máquina, nº de contrato (salvo cliente final) y características técnicas; `origen` se conserva sin interfaz.

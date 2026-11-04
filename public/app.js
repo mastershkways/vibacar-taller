@@ -77,6 +77,7 @@ function toast(mensaje, tipo = '') {
   };
   el.onclick = quitar;
   setTimeout(quitar, tipo === 'error' ? 7000 : 4000);
+  return el; // quien lo cree puede quitarlo antes (p. ej. "Sincronizando…")
 }
 
 function aviso(contenedor, mensaje, tipo = 'error', botonTexto = null, botonFn = null) {
@@ -264,6 +265,45 @@ function pintarCabecera() {
     }
     $('.menu-lista', menus.get(v.grupo)).append(botonVista(nombre, v.titulo));
   }
+  // F3.5-03: sincronización manual con Karve, al final del desplegable Maestros (administrativo y responsable_st).
+  if (menus.has('Maestros') && puede('karve.sincronizar')) {
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.dataset.accion = 'sincronizar-karve';
+    b.className = 'menu-extra';
+    b.textContent = '⟳ Sincronizar Karve';
+    b.onclick = () => { cerrarMenus(); sincronizarKarve(); };
+    $('.menu-lista', menus.get('Maestros')).append(b);
+  }
+}
+
+// Lanza la sincronización con Karve (clientes, contactos y máquinas) y muestra el resumen.
+async function sincronizarKarve() {
+  const r = await elegir('¿Sincronizar clientes, contactos y máquinas desde Karve? Karve manda en los datos que trae; lo rellenado a mano se conserva. Puede tardar unos segundos.', [{ etiqueta: 'Sincronizar', valor: 1 }]);
+  if (!r) return;
+  const aviso = toast('Sincronizando con Karve…', 'aviso');
+  let resumen;
+  try {
+    resumen = await api('/api/karve/sincronizar', { method: 'POST', body: {} });
+  } catch (e) {
+    if (e.status !== 401) toast(e.message, 'error');
+    return;
+  } finally {
+    if (aviso && aviso.remove) aviso.remove();
+  }
+  const nodo = tpl('tpl-karve');
+  const fila = (n, x) => `<div><span>${n}</span>${x.nuevos} nuevos · ${x.actualizados} actualizados · ${x.sin_cambios} sin cambios<br><small class="suave">${x.leidos} leídos en Karve</small></div>`;
+  ref('resumen', nodo).innerHTML = `
+    ${fila('Clientes', resumen.clientes)}
+    ${fila('Contactos', resumen.contactos)}
+    ${fila('Máquinas', resumen.maquinas)}
+    <div><span>Duración</span>${(resumen.duracion_ms / 1000).toFixed(1)} s</div>`;
+  const ul = ref('alertas', nodo);
+  if (!resumen.avisos.length) ref('bloque-alertas', nodo).classList.add('oculto');
+  for (const a of resumen.avisos) ul.insertAdjacentHTML('beforeend', `<li><span>${esc(a)}</span></li>`);
+  abrirModal(nodo);
+  toast(`Karve: ${resumen.clientes.nuevos + resumen.maquinas.nuevos} altas y ${resumen.clientes.actualizados + resumen.maquinas.actualizados} cambios`, 'ok');
+  refrescarVista();
 }
 
 // Desplegables de la cabecera: la lista va en position:fixed para que el scroll horizontal del nav no la recorte.
@@ -681,6 +721,17 @@ async function abrirCliente(id) {
     try { cliente.maquinas = (await api(`/api/clientes/${cliente.id}`)).maquinas; pintarMaquinasCliente(); }
     catch (e) { if (e.status !== 401) toast(e.message, 'error'); }
   };
+  // Contactos traídos de Karve (F3.5-03): solo lectura; los 3 principales ya van en los campos de arriba.
+  const pintarContactos = () => {
+    const lista = (cliente.contactos || []).filter((c) => c.activo);
+    if (!lista.length) return;
+    ref('bloque-contactos', nodo).classList.remove('oculto');
+    const ul = ref('contactos', nodo);
+    for (const c of lista) {
+      const detalle = [c.cargo || c.departamento, c.telefono, c.email].filter(Boolean).join(' · ');
+      ul.insertAdjacentHTML('beforeend', `<li><b>${esc(c.nombre)}</b><span class="suave">${esc(detalle)}</span></li>`);
+    }
+  };
 
   if (cliente) {
     for (const campo of CAMPOS_CLIENTE) form.elements[campo].value = cliente[campo] || '';
@@ -690,6 +741,7 @@ async function abrirCliente(id) {
       <div><span>Alta</span>${esc(fecha(cliente.creado))}</div>
       <div><span>Actividad</span>${cliente.antiguo ? '<b>Antiguo</b>: más de 3 años sin factura' : (cliente.ultima_factura ? 'Con actividad' : 'Sin factura registrada')}${cliente.activo ? '' : ' · <b>de baja</b>'}</div>`;
     pintarMaquinasCliente();
+    pintarContactos();
     const btnMaquina = ref('nueva-maquina', nodo);
     if (btnMaquina) {
       if (!cliente.activo) btnMaquina.classList.add('oculto'); // bajas heredadas: sin máquinas nuevas
