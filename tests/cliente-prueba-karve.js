@@ -18,7 +18,7 @@ async function login(usuario, clave) {
   if (r.status !== 200) throw new Error(`login ${usuario} → ${r.status}`);
   return (r.headers.get('set-cookie') || '').split(';')[0];
 }
-const RE_FLOTA = /^F-\d{2}-\d{4}$/;
+const flotaKarve = (m) => (/^\d+$/.test(m.karve_id) ? String(Number(m.karve_id)) : m.karve_id); // F3.5-06: nº de flota = código de Karve sin ceros
 
 (async () => {
   let x;
@@ -71,7 +71,16 @@ const RE_FLOTA = /^F-\d{2}-\d{4}$/;
   x = await pedir('/api/maquinas?todos=1', { cookie: A });
   const maqs = x.j;
   const maqKarve = maqs.filter((m) => m.origen === 'karve' && /^\d{5,7}$/.test(m.karve_id || '')); // las del seed llevan karve_id ficticio (M000…)
-  ok('GET /maquinas?todos=1 → ≥ 4.000 de Karve con nº de flota generado F-YY-XXXX y estado propia/cliente_final', maqKarve.length >= 4000 && maqKarve.every((m) => RE_FLOTA.test(m.num_flota) && ['propia', 'cliente_final'].includes(m.estado)), `n=${maqKarve.length}`);
+  ok('GET /maquinas?todos=1 → ≥ 4.000 de Karve con nº de flota = código de Karve sin ceros (0003641 → 3641) y estado propia/cliente_final', maqKarve.length >= 4000 && maqKarve.every((m) => m.num_flota === flotaKarve(m) && ['propia', 'cliente_final'].includes(m.estado)), `n=${maqKarve.length} ej=${maqKarve[0] && maqKarve[0].karve_id + '→' + maqKarve[0].num_flota}`);
+  x = await pedir('/api/maquinas?pagina=1&limite=50', { cookie: A });
+  ok('paginación máquinas: ?pagina=1&limite=50 → 50 filas, total ≥ 4.000 y nº de páginas', x.s === 200 && x.j.filas.length === 50 && x.j.total >= 4000 && x.j.paginas === Math.ceil(x.j.total / 50) && x.j.pagina === 1, `total=${x.j.total} paginas=${x.j.paginas}`);
+  const primera = x.j.filas[0].id;
+  x = await pedir('/api/maquinas?pagina=2&limite=50', { cookie: A });
+  ok('paginación máquinas: la página 2 empieza por otra máquina', x.s === 200 && x.j.pagina === 2 && x.j.filas.length === 50 && x.j.filas[0].id !== primera);
+  x = await pedir('/api/clientes?pagina=1&limite=10&todos=1', { cookie: A });
+  ok('paginación clientes: ?pagina=1&limite=10&todos=1 → 10 filas y total ≥ 3.050', x.s === 200 && x.j.filas.length === 10 && x.j.total >= 3050, `total=${x.j.total}`);
+  x = await pedir('/api/clientes?pagina=1&limite=1000', { cookie: A });
+  ok('paginación: el límite se recorta a 500', x.s === 200 && x.j.limite === 500 && x.j.filas.length <= 500);
   ok('máquinas: hay propias, hay características (tipo/motor) y el seed conserva su flota (IB-12)', maqKarve.some((m) => m.estado === 'propia') && maqKarve.filter((m) => m.caracteristicas).length > 1000 && maqs.some((m) => m.num_flota === 'IB-12'), `propias=${maqKarve.filter((m) => m.estado === 'propia').length}`);
   const maqPrueba = maqKarve.find((m) => m.estado === 'cliente_final' && m.activo === 1);
 

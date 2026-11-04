@@ -70,4 +70,9 @@ app.listen(PORT, () => {
   console.log(`✅ Gestión de Taller Vibacar escuchando en http://localhost:${PORT}`);
   console.log(`   BD: ${RUTA_BD} (${nUsuarios} usuarios activos, ${nOT} O.T.)`);
   if (!fs.existsSync(INDEX)) console.log('   Aviso: public/index.html aún no existe; se sirve una pantalla provisional.');
+  // F3.5-05: el contador de O.T. sigue la secuencia de Karve; se sube al arrancar si está por debajo (sin bloquear el arranque).
+  require('./numeracion').sincronizarContadorKarve().then((r) => {
+    if (r.maximoKarve === null) console.log('   Numeración: sin conexión a Karve, contador local; próxima O.T. ' + r.proximo);
+    else console.log(`   Numeración: máximo en Karve ${String(r.maximoKarve).padStart(10, '0')}${r.actualizado ? ' (contador actualizado)' : ''}; próxima O.T. ${r.proximo}`);
+  }).catch((e) => console.log(`   Numeración: no se ha podido leer Karve (${e.message}); contador local`));
 });

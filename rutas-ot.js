@@ -9,7 +9,7 @@
 const express = require('express');
 const crypto = require('crypto');
 const { db, ahora } = require('./db');
-const { siguienteNumeroOT } = require('./numeracion');
+const { siguienteNumeroOT, leerMaximoKarve } = require('./numeracion');
 const { requierePermiso, puede, alcanceDe } = require('./permisos');
 const { ErrorHttp, texto, entero, enumerado, idRuta } = require('./validar');
 
@@ -258,8 +258,18 @@ module.exports = function montarRutasOT(app) {
     });
   });
 
-  // Alta.
-  r.post('/ot', requierePermiso('ot.crear'), (req, res) => {
+  // Alta. El número sigue la secuencia de Karve: se lee su máximo justo antes (F3.5-05) y nunca se asigna uno menor.
+  r.post('/ot', requierePermiso('ot.crear'), async (req, res, next) => {
+    let maximoKarve = 0;
+    try { maximoKarve = (await leerMaximoKarve()) || 0; }
+    catch (e) { console.warn(`${ahora()} numeración: no se ha podido leer el máximo de Karve (${e.message}); se usa el contador local`); }
+    try {
+      const id = altaOT(req, maximoKarve);
+      res.status(201).json(detalleOT(req, id));
+    } catch (e) { next(e); }
+  });
+
+  function altaOT(req, maximoKarve) {
     const b = req.body || {};
     const campos = leerCamposOT(b, false);
     comprobarMaquinaDeCliente(campos._maquina_cliente_id, campos.cliente_id);
@@ -275,7 +285,7 @@ module.exports = function montarRutasOT(app) {
     const prioridad = campos.prioridad ?? estado.prioridad_defecto;
 
     const crear = db.transaction(() => {
-      const num = siguienteNumeroOT();
+      const num = siguienteNumeroOT({ minimo: maximoKarve });
       const info = db.prepare(`
         INSERT INTO ot (numero, anio, secuencia, cliente_id, maquina_id, estado, prioridad, tipo, origen, sintoma, descripcion, notas_internas, creado_por, creado)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
@@ -284,9 +294,8 @@ module.exports = function montarRutasOT(app) {
       stmt.historial.run(info.lastInsertRowid, null, estado.codigo, req.usuario.id, ahora(), 'Apertura de la O.T.');
       return info.lastInsertRowid;
     });
-    const id = crear.immediate();
-    res.status(201).json(detalleOT(req, id));
-  });
+    return crear.immediate();
+  }
 
   // Detalle: O.T. + historial + asignaciones + transiciones posibles para el rol.
   r.get('/ot/:id', requierePermiso('ot.ver'), (req, res) => {

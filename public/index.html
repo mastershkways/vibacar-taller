@@ -80,6 +80,7 @@
       <thead><tr><th>Razón social</th><th>NIF/CIF</th><th>Teléfono</th><th>Contacto técnico</th><th>Comercial</th><th>Última factura</th></tr></thead>
       <tbody data-ref="filas"></tbody>
     </table>
+    <div class="paginacion" data-ref="paginacion"></div>
   </div>
 </template>
 
@@ -100,6 +101,7 @@
       <thead><tr><th>Máquina</th><th>Bastidor</th><th>Nº flota</th><th>Cliente</th><th>Estado</th><th>Horas</th></tr></thead>
       <tbody data-ref="filas"></tbody>
     </table>
+    <div class="paginacion" data-ref="paginacion"></div>
   </div>
 </template>
 <template id="tpl-usuarios">
@@ -311,7 +313,7 @@
           </div>
           <div class="fila">
             <div><label>Bastidor / nº de serie</label><input type="text" name="bastidor" maxlength="100" autocomplete="off" class="mayusculas"></div>
-            <div><label>Nº de flota</label><input type="text" name="num_flota" maxlength="50" autocomplete="off" placeholder="Se asigna al guardar (F-AA-0000)" readonly></div>
+            <div><label>Nº de flota</label><input type="text" name="num_flota" maxlength="50" autocomplete="off" placeholder="Se asigna al guardar (siguiente nº de flota)" readonly></div>
           </div>
           <div class="fila">
             <div><label>Estado</label><select name="estado" data-ref="estado"><option value="cliente_final">Cliente final</option><option value="propia">Propia</option><option value="rent_to_rent">Rent to Rent</option><option value="subalquilada">Subalquilada</option></select></div>

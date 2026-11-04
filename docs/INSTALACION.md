@@ -42,7 +42,7 @@ El `.env` **no se versiona** y es el único sitio donde van las credenciales. Va
 | `APP_CLAVE` | Contraseña de ese administrador inicial. Si está vacía no se crea nadie y no se puede entrar | (ponla) |
 | `SECRETO_COOKIE` | Cadena larga y aleatoria para firmar la cookie de sesión. Cambiarla cierra todas las sesiones | (genera una) |
 | `SESION_DIAS` | Días que dura una sesión sin volver a pedir contraseña | `30` |
-| `CONTADOR_OT_INICIAL` | Último número de O.T. real del año en curso (ver apartado 8) | `0` o el real |
+| `CONTADOR_OT_INICIAL` | Último número de O.T. real, solo para arrancar sin conexión a Karve (ver apartado 8) | `0` o el real |
 | `COOKIE_SEGURA` | Opcional. `1` solo si se sirve por HTTPS (marca la cookie como Secure) | (sin definir) |
 | `RUTA_BD` | Opcional. Ruta de la base de datos si no se quiere `.cache/datos.db` | (sin definir) |
 
@@ -75,7 +75,7 @@ Para parar: `Ctrl+C`. Tras cambiar cualquier `.js` de la raíz hay que reiniciar
 2. Entra con `APP_USUARIO` y `APP_CLAVE`.
 3. La pantalla depende del rol: el administrador ve el Tablero; un técnico ve "Mis O.T."; el resto, el Listado.
 4. Crea los clientes en Maestros → "Clientes" (o el primero directamente desde "+ Nueva O.T.", que también permite el alta rápida de cliente y máquina). La ficha lleva contacto de compras, contacto técnico, correo de facturas y fecha de la última factura. Los clientes no se borran ni se desactivan: el que lleva más de 3 años sin factura pasa a "antiguo" y solo aparece con "Mostrar: Todos" (la fecha vendrá de Karve).
-5. Las máquinas, en Maestros → "Máquinas" o desde la ficha de su cliente (botón "+ Máquina"). El nº de flota se asigna solo al guardar (`F-26-0001`, correlativo por año); el bastidor no puede repetirse; el nº de contrato solo se pide si la máquina no es de cliente final. Tras el alta solo se cambian horas y observaciones: un administrativo tiene el botón "Editar campos bloqueados" para corregir errores. También se desactivan en vez de borrarse.
+5. Las máquinas, en Maestros → "Máquinas" o desde la ficha de su cliente (botón "+ Máquina"). El nº de flota se asigna solo al guardar (el siguiente al mayor que haya; en las máquinas de Karve es su código); el bastidor no puede repetirse; el nº de contrato solo se pide si la máquina no es de cliente final. Tras el alta solo se cambian horas y observaciones: un administrativo tiene el botón "Editar campos bloqueados" para corregir errores. También se desactivan en vez de borrarse.
 6. El personal, en la pestaña "Usuarios" (solo administradores): usuario, nombre, email, rol, código de operario en Karve y contraseña. Al editar, la contraseña en blanco no se toca; escribir una nueva la cambia. Desactivar a alguien bloquea su acceso al instante (y cierra su sesión) sin borrar sus O.T.; nadie puede desactivarse ni cambiarse el rol a sí mismo.
 7. Cada cliente puede tener un "Comercial responsable" (selector en su ficha, solo usuarios activos con rol comercial). Un usuario con rol comercial solo ve los clientes de su cartera, sus máquinas y sus O.T., en el Listado y en el Tablero; el resto le da "no encontrado". Quien no tenga cartera no ve nada hasta que se le asigne. El rol "Jefe comercial" tiene los mismos permisos pero ve todos los clientes.
 
@@ -99,13 +99,15 @@ Es la alternativa por consola a la pestaña "Usuarios" de la aplicación (solo a
 
 ## 8. Numeración de las O.T.
 
-Las O.T. se numeran `AAAA-NNNN` (`2026-0001`). El histórico real está en Karve, así que antes de abrir la primera O.T. hay que decirle a la aplicación por dónde va el año:
+Las O.T. llevan el mismo número que en Karve: un secuencial de 10 dígitos (`0000107951`), sin año. Administración sigue abriendo O.T. en el ERP, así que la aplicación lee el máximo de Karve (`kv_vOrdenesTrabajo`) al arrancar, en cada "Sincronizar Karve" y **justo antes de cada alta**, y asigna siempre ese máximo + 1 (o el contador local + 1 si es mayor). Si Karve no responde, se usa el contador local y queda un aviso en el log.
 
 ```
-node scripts/fijar-contador.js 412
+node scripts/fijar-contador.js            muestra el contador local, el próximo número y el máximo de Karve
+node scripts/fijar-contador.js --karve    sube el contador local al máximo de Karve
+node scripts/fijar-contador.js 107950     fija el último número usado a mano (sin conexión)
 ```
 
-significa "la última O.T. real de este año es la 0412; la próxima será la 0413". Sin parámetros muestra el contador y el próximo número. Alternativa: poner ese valor en `CONTADOR_OT_INICIAL` del `.env` antes de abrir la primera O.T. El script nunca deja bajar el contador por debajo de una O.T. ya existente salvo con `--forzar`.
+`CONTADOR_OT_INICIAL` del `.env` solo se usa para crear el contador la primera vez si no hay conexión. El contador nunca baja por debajo de una O.T. ya existente (salvo `--forzar`).
 
 ## 9. Copias de seguridad
 
@@ -144,7 +146,7 @@ Para ver la interfaz con datos sin tener que crearlos a mano:
 node scripts/generar-datos-prueba.js
 ```
 
-Crea usuarios de prueba de todos los roles (`finanzas1` administrativo, `responsable1`, `gerencia1`, `gestorsat1`, `tecnico1`, `tecnico2`, `sat1`, `recambista1`, `comercial1`, `jefeventas1`, más `tecnico3` desactivado; los técnicos con código de operario en Karve; la contraseña se muestra al terminar), 12 clientes con contactos y última factura (dos "antiguos" con más de 3 años sin factura; dos en la cartera de `comercial1`), 24 máquinas con estado, contrato y características (las que no traen nº de flota del cliente reciben uno `F-AA-0000`; el contador no se reinicia con `--limpiar`) y 20 O.T. repartidas por todas las columnas del Tablero, con historial y asignaciones. Se niega a ejecutarse si ya hay datos: `--limpiar` borra antes todas las O.T., máquinas y clientes (no los usuarios) y `--anadir` añade otra tanda. Respeta la numeración (sigue el contador) y no hace falta reiniciar el servidor. **Solo para bases de desarrollo o pruebas.**
+**`--limpiar` es la purga para el entorno real**: vacía toda la base (O.T., máquinas, clientes, contactos, sincronizaciones, sesiones, usuarios y contadores) y deja solo el administrador del `.env`, `nacho` (jefe comercial, Karve `0000023`) y `jruiz` (comercial, Karve `0000028`) con una contraseña inicial que se muestra una vez; después, reiniciar el servidor y pulsar "Sincronizar Karve". Sin opciones, el script crea datos ficticios para desarrollo: usuarios de prueba de todos los roles (`finanzas1` administrativo, `responsable1`, `gerencia1`, `gestorsat1`, `tecnico1`, `tecnico2`, `sat1`, `recambista1`, `comercial1`, `jefeventas1`, más `tecnico3` desactivado; los técnicos con código de operario en Karve; la contraseña se muestra al terminar), 12 clientes con contactos y última factura (dos "antiguos" con más de 3 años sin factura; dos en la cartera de `comercial1`), 24 máquinas con estado, contrato y características (las que no traen nº de flota reciben el siguiente numérico) y 20 O.T. repartidas por todas las columnas del Tablero, con historial y asignaciones. Se niega a ejecutarse si ya hay datos salvo con `--anadir` (añade otra tanda). Respeta la numeración (sigue el contador) y no hace falta reiniciar el servidor. **Solo para bases de desarrollo o pruebas.**
 
 Las pruebas automáticas (HTTP, navegador headless y migración de roles) están en `tests/`; `tests/README.md` explica cómo lanzarlas con `tests\ejecutar-fase3.ps1`. Siempre usan una base temporal propia.
 
@@ -201,4 +203,4 @@ node scripts/karve-sincronizar.js             sincroniza (código de salida 0 si
 node scripts/karve-sincronizar.js --simular   solo informa, no escribe
 ```
 
-Reglas: Karve manda en los datos que trae (nombre, NIF, teléfono, email, dirección, alta, baja, comercial y fecha de la última factura); lo que se rellena a mano en la ficha (contactos principales, zona, nº de contrato, características, observaciones, estado reclasificado de una máquina) no se pisa. Los contactos de Karve van a la tabla `cliente_contactos` y se ven en la ficha del cliente; los tres huecos de la ficha se rellenan solos por el cargo del contacto si estaban vacíos. Las máquinas se vinculan al cliente **actual** de Karve y reciben un nº de flota `F-AA-0000` al crearse; los bastidores repetidos o vacíos solo generan un aviso. Cada ejecución queda registrada en la tabla `sincronizaciones`.
+Reglas: Karve manda en los datos que trae (nombre, NIF, teléfono, email, dirección, alta, baja, comercial y fecha de la última factura); lo que se rellena a mano en la ficha (contactos principales, zona, nº de contrato, características, observaciones, estado reclasificado de una máquina) no se pisa. Los contactos de Karve van a la tabla `cliente_contactos` y se ven en la ficha del cliente; los tres huecos de la ficha se rellenan solos por el cargo del contacto si estaban vacíos. Las máquinas se vinculan al cliente **actual** de Karve y su nº de flota es el código de la máquina en Karve (`0003641` → `3641`); los bastidores repetidos o vacíos solo generan un aviso. Cada ejecución queda registrada en la tabla `sincronizaciones`.

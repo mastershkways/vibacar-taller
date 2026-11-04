@@ -150,9 +150,9 @@ CREATE TABLE IF NOT EXISTS contadores (
 
 CREATE TABLE IF NOT EXISTS ot (
   id          INTEGER PRIMARY KEY AUTOINCREMENT,
-  numero      TEXT    NOT NULL UNIQUE,          -- '2026-0001'
-  anio        INTEGER NOT NULL,
-  secuencia   INTEGER NOT NULL,
+  numero      TEXT    NOT NULL UNIQUE,          -- formato Karve: 10 dígitos, '0000107951' (F3.5-05)
+  anio        INTEGER NOT NULL,                 -- año de apertura (informativo)
+  secuencia   INTEGER NOT NULL,                 -- número sin ceros a la izquierda
   cliente_id  INTEGER NOT NULL REFERENCES clientes(id),
   maquina_id  INTEGER REFERENCES maquinas(id),
   estado      TEXT    NOT NULL REFERENCES estados(codigo),
@@ -293,10 +293,30 @@ function migrarRoles() {
   }
 }
 
+// F3.5-05: numeración anterior 'AAAA-NNNN' → formato Karve de 10 dígitos; contadores 'ot-AAAA' → 'ot'.
+function migrarNumeracion() {
+  const n = db.prepare("SELECT COUNT(*) AS n FROM ot WHERE numero LIKE '____-____'").get().n;
+  if (n) {
+    db.prepare("UPDATE ot SET numero = printf('%010d', secuencia) WHERE numero LIKE '____-____'").run();
+    console.log(`   BD: ${n} O.T. renumeradas al formato de Karve (10 dígitos)`);
+  }
+  const viejos = db.prepare("SELECT MAX(valor) AS m, COUNT(*) AS n FROM contadores WHERE clave LIKE 'ot-%'").get();
+  if (viejos.n) {
+    const actual = db.prepare("SELECT valor FROM contadores WHERE clave = 'ot'").get();
+    if (!actual) db.prepare("INSERT INTO contadores (clave, valor) VALUES ('ot', ?)").run(viejos.m || 0);
+    db.prepare("DELETE FROM contadores WHERE clave LIKE 'ot-%'").run();
+    console.log('   BD: contador de O.T. unificado (sin año)');
+  }
+  // F3.5-06: el nº de flota ya no usa contador (es el código de Karve o el siguiente al máximo numérico).
+  const flota = db.prepare("DELETE FROM contadores WHERE clave LIKE 'flota-%'").run();
+  if (flota.changes) console.log('   BD: contadores de nº de flota retirados');
+}
+
 function migrar() {
   db.exec(TABLAS);
   for (const [tabla, columna, definicion] of COLUMNAS_NUEVAS) asegurarColumna(tabla, columna, definicion);
   migrarRoles();
+  migrarNumeracion();
   sembrar();
 }
 

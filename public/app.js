@@ -19,6 +19,8 @@ const S = {
   vista: null,
   kanban: { etag: null, datos: null, timer: null, cargando: false },
   listado: { pagina: 1, limite: 100 },
+  clientes: { pagina: 1, limite: 50 },
+  maquinas: { pagina: 1, limite: 50 },
   tecnicos: null,
 };
 
@@ -617,6 +619,19 @@ async function cargarListado() {
   }
 }
 
+// Controles de página anterior/siguiente bajo una tabla (clientes y máquinas, F3.5-06).
+function pintarPaginacion(contenedor, datos, irA) {
+  if (!contenedor) return;
+  if (datos.total <= datos.limite) { contenedor.innerHTML = ''; return; }
+  const desde = (datos.pagina - 1) * datos.limite + 1;
+  const hasta = Math.min(datos.total, datos.pagina * datos.limite);
+  contenedor.innerHTML = `<span>${desde}–${hasta} de ${datos.total.toLocaleString('es-ES')} · página ${datos.pagina} de ${datos.paginas}</span>
+    <button class="btn btn-pequeno" type="button" data-accion="ant" ${datos.pagina <= 1 ? 'disabled' : ''} aria-label="Página anterior">‹</button>
+    <button class="btn btn-pequeno" type="button" data-accion="sig" ${datos.pagina >= datos.paginas ? 'disabled' : ''} aria-label="Página siguiente">›</button>`;
+  $('[data-accion="ant"]', contenedor).onclick = () => irA(datos.pagina - 1);
+  $('[data-accion="sig"]', contenedor).onclick = () => irA(datos.pagina + 1);
+}
+
 // Refresca la vista de fondo tras un cambio hecho desde un modal.
 function refrescarVista() {
   if (S.vista === 'kanban') { S.kanban.etag = null; cargarKanban(); }
@@ -633,9 +648,10 @@ function refrescarVista() {
 function pintarClientes() {
   const form = ref('filtros', app);
   let temporizador = null;
-  form.onsubmit = (e) => { e.preventDefault(); cargarClientes(); };
-  form.elements.q.oninput = () => { clearTimeout(temporizador); temporizador = setTimeout(cargarClientes, 250); };
-  form.elements.todos.onchange = cargarClientes;
+  const primera = () => { S.clientes.pagina = 1; cargarClientes(); };
+  form.onsubmit = (e) => { e.preventDefault(); primera(); };
+  form.elements.q.oninput = () => { clearTimeout(temporizador); temporizador = setTimeout(primera, 250); };
+  form.elements.todos.onchange = primera;
   const nuevo = $('[data-accion="nuevo-cliente"]', app);
   if (nuevo) nuevo.onclick = () => abrirCliente(null);
   cargarClientes();
@@ -649,10 +665,14 @@ async function cargarClientes() {
   const q = form.elements.q.value.trim();
   if (q) params.set('q', q);
   if (form.elements.todos.value) params.set('todos', '1');
+  params.set('pagina', S.clientes.pagina);
+  params.set('limite', S.clientes.limite);
   filas.classList.add('cargando');
   try {
-    const clientes = await api(`/api/clientes?${params}`);
-    ref('contador', app).textContent = `${clientes.length} cliente${clientes.length === 1 ? '' : 's'}`;
+    const datos = await api(`/api/clientes?${params}`);
+    const clientes = datos.filas;
+    ref('contador', app).textContent = `${datos.total.toLocaleString('es-ES')} cliente${datos.total === 1 ? '' : 's'}`;
+    pintarPaginacion(ref('paginacion', app), datos, (p) => { S.clientes.pagina = p; cargarClientes(); });
     filas.innerHTML = '';
     if (!clientes.length) filas.innerHTML = '<tr><td colspan="6" class="vacio">Sin resultados</td></tr>';
     for (const c of clientes) {
@@ -797,9 +817,10 @@ const ESTADOS_MAQUINA = { propia: 'Propia', rent_to_rent: 'Rent to Rent', subalq
 function pintarMaquinas() {
   const form = ref('filtros', app);
   let temporizador = null;
-  form.onsubmit = (e) => { e.preventDefault(); cargarMaquinas(); };
-  form.elements.q.oninput = () => { clearTimeout(temporizador); temporizador = setTimeout(cargarMaquinas, 250); };
-  form.elements.todos.onchange = cargarMaquinas;
+  const primera = () => { S.maquinas.pagina = 1; cargarMaquinas(); };
+  form.onsubmit = (e) => { e.preventDefault(); primera(); };
+  form.elements.q.oninput = () => { clearTimeout(temporizador); temporizador = setTimeout(primera, 250); };
+  form.elements.todos.onchange = primera;
   const nueva = $('[data-accion="nueva-maquina"]', app);
   if (nueva) nueva.onclick = () => abrirMaquina(null);
   cargarMaquinas();
@@ -813,10 +834,14 @@ async function cargarMaquinas() {
   const q = form.elements.q.value.trim();
   if (q) params.set('q', q);
   if (form.elements.todos.value) params.set('todos', '1');
+  params.set('pagina', S.maquinas.pagina);
+  params.set('limite', S.maquinas.limite);
   filas.classList.add('cargando');
   try {
-    const maquinas = await api(`/api/maquinas?${params}`);
-    ref('contador', app).textContent = `${maquinas.length} máquina${maquinas.length === 1 ? '' : 's'}`;
+    const datos = await api(`/api/maquinas?${params}`);
+    const maquinas = datos.filas;
+    ref('contador', app).textContent = `${datos.total.toLocaleString('es-ES')} máquina${datos.total === 1 ? '' : 's'}`;
+    pintarPaginacion(ref('paginacion', app), datos, (p) => { S.maquinas.pagina = p; cargarMaquinas(); });
     filas.innerHTML = '';
     if (!maquinas.length) filas.innerHTML = '<tr><td colspan="6" class="vacio">Sin resultados</td></tr>';
     for (const m of maquinas) {

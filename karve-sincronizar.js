@@ -9,13 +9,13 @@
 //   - Comercial del cliente = CLIENTES2.VENDEDOR → usuario de la app con ese `karve_id` y rol comercial; si no hay, NULL.
 //   - Contactos: todos a `cliente_contactos`; heurística por cargo/departamento para los 3 huecos de la ficha si están vacíos.
 //   - Máquinas: cliente = el ACTUAL de Karve (si no hay, el propietario; si es propia y no hay ninguno, VIBACAR 0000000);
-//     sin cliente resoluble se avisa y se omite. Nº de flota: Karve no lo tiene → F-YY-XXXX al crear. Bastidores
+//     sin cliente resoluble se avisa y se omite. Nº de flota = código de la máquina en Karve (id sin ceros). Bastidores
 //     repetidos o vacíos: aviso, no bloqueo. Estado: propia → 'propia', resto → 'cliente_final' (administración reclasifica).
 //   - Todo se escribe en una transacción; `simular: true` lo deshace al final (informe sin tocar nada).
 
 const { db, ahora } = require('./db');
 const karve = require('./karve');
-const { siguienteNumeroFlota } = require('./numeracion');
+const { sincronizarContadorKarve } = require('./numeracion');
 
 const ZONAS = { 48: 'Bizkaia', '01': 'Araba', 20: 'Gipuzkoa', 28: 'Madrid' };
 const ROLES_COMERCIALES = ['comercial', 'comercial_jefe'];
@@ -34,6 +34,8 @@ const primerEmail = (v) => { const m = String(v || '').match(/[^\s;,<>"']+@[^\s;
 const cifNormalizado = (v) => { const s = limpiar(v); return s ? s.toUpperCase().replace(/[\s-]/g, '') : null; };
 const zonaDe = (prov) => { const p = limpiar(prov); return p ? (ZONAS[p] || ZONAS[Number(p)] || 'otras') : null; };
 const activoDe = (f) => (Number(f.inactivo) ? 0 : 1) && (f.fechaBaja ? 0 : 1);
+// Nº de flota = código de Karve: numérico sin ceros a la izquierda (0003641 → 3641); si no es numérico (001854C), tal cual.
+const flotaDe = (id) => (/^\d+$/.test(id) ? String(Number(id)) : id);
 
 let enCurso = false;
 const estaEnCurso = () => enCurso;
@@ -176,7 +178,7 @@ function aplicar(datos, resumen, avisar) {
   const selMaqBastidor = db.prepare('SELECT * FROM maquinas WHERE bastidor = ? AND karve_id IS NULL');
   const insMaq = db.prepare(`INSERT INTO maquinas (cliente_id, marca, modelo, bastidor, num_flota, estado, caracteristicas, observaciones, karve_id, origen, activo, creado)
                              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'karve', ?, ?)`);
-  const updMaq = db.prepare(`UPDATE maquinas SET cliente_id = ?, marca = ?, modelo = ?, bastidor = ?, estado = ?, caracteristicas = ?, observaciones = ?, karve_id = ?, origen = 'karve', activo = ?, actualizado = ? WHERE id = ?`);
+  const updMaq = db.prepare(`UPDATE maquinas SET cliente_id = ?, marca = ?, modelo = ?, bastidor = ?, num_flota = ?, estado = ?, caracteristicas = ?, observaciones = ?, karve_id = ?, origen = 'karve', activo = ?, actualizado = ? WHERE id = ?`);
   const vibacarId = clientePorKarve.get(KARVE_VIBACAR) || null;
   const bastidores = new Map();
   for (const m of datos.maquinas) { const b = cifNormalizado(m.bastidor); if (b) bastidores.set(b, (bastidores.get(b) || 0) + 1); }
@@ -196,6 +198,7 @@ function aplicar(datos, resumen, avisar) {
       marca: limpiar(k.nomMarca),
       modelo: limpiar(k.nomModelo),
       bastidor,
+      num_flota: flotaDe(karveId),
       estado: propia ? 'propia' : 'cliente_final',
       caracteristicas: [limpiar(k.nomTipo), limpiar(k.motor) ? `Motor: ${limpiar(k.motor)}` : null, limpiar(k.descripcion)].filter(Boolean).join('\n') || null,
       observaciones: [limpiar(k.ubicacion) ? `Ubicación: ${limpiar(k.ubicacion)}` : null, limpiar(k.observaciones)].filter(Boolean).join('\n') || null,
@@ -204,7 +207,7 @@ function aplicar(datos, resumen, avisar) {
     };
     let local = selMaqKarve.get(karveId) || (bastidor && !(bastidores.get(bastidor) > 1) ? selMaqBastidor.get(bastidor) : null);
     if (!local) {
-      insMaq.run(nuevo.cliente_id, nuevo.marca, nuevo.modelo, nuevo.bastidor, siguienteNumeroFlota(), nuevo.estado, nuevo.caracteristicas, nuevo.observaciones, karveId, nuevo.activo, nuevo.creado || ahora());
+      insMaq.run(nuevo.cliente_id, nuevo.marca, nuevo.modelo, nuevo.bastidor, nuevo.num_flota, nuevo.estado, nuevo.caracteristicas, nuevo.observaciones, karveId, nuevo.activo, nuevo.creado || ahora());
       resumen.maquinas.nuevos++;
       continue;
     }
@@ -214,13 +217,14 @@ function aplicar(datos, resumen, avisar) {
       marca: nuevo.marca || local.marca,
       modelo: nuevo.modelo || local.modelo,
       bastidor: nuevo.bastidor || local.bastidor,
+      num_flota: nuevo.num_flota, // Karve manda
       estado: ['propia', 'cliente_final'].includes(local.estado) ? nuevo.estado : local.estado,
       caracteristicas: local.caracteristicas || nuevo.caracteristicas,
       observaciones: local.observaciones || nuevo.observaciones,
       activo: nuevo.activo,
     };
     const cambia = Object.keys(final).some((c) => (final[c] ?? null) !== (local[c] ?? null)) || local.karve_id !== karveId || local.origen !== 'karve';
-    if (cambia) { updMaq.run(final.cliente_id, final.marca, final.modelo, final.bastidor, final.estado, final.caracteristicas, final.observaciones, karveId, final.activo, ahora(), local.id); resumen.maquinas.actualizados++; }
+    if (cambia) { updMaq.run(final.cliente_id, final.marca, final.modelo, final.bastidor, final.num_flota, final.estado, final.caracteristicas, final.observaciones, karveId, final.activo, ahora(), local.id); resumen.maquinas.actualizados++; }
     else resumen.maquinas.sin_cambios++;
   }
   resumen.maquinas.sin_cliente = sinCliente;
@@ -250,6 +254,8 @@ async function sincronizar({ entorno = 'copia', origen = 'manual', usuarioId = n
     const datos = await leerKarve(entorno);
     const tx = db.transaction(() => { aplicar(datos, resumen, avisar); if (simular) throw new Simulacion('simulación'); });
     try { tx(); } catch (e) { if (!(e instanceof Simulacion)) throw e; }
+    // Contador de O.T. al día con la secuencia de Karve (no se baja nunca; en simulación tampoco se toca).
+    if (!simular) { try { const n = await sincronizarContadorKarve({ entorno }); resumen.numeracion = { maximo_karve: n.maximoKarve, proxima_ot: n.proximo, actualizado: n.actualizado }; } catch (e) { avisar(`numeración: no se ha podido leer el máximo de Karve (${e.message})`); } }
     resumen.fin = ahora();
     resumen.duracion_ms = Date.now() - t0;
     if (!simular) db.prepare('INSERT INTO sincronizaciones (inicio, fin, origen, usuario_id, estado, resumen) VALUES (?, ?, ?, ?, ?, ?)').run(inicio, resumen.fin, origen, usuarioId, 'ok', JSON.stringify(resumen));

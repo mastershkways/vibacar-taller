@@ -73,7 +73,7 @@ if (-not $SinNavegador) {
 }
 
 Ciclo 'clientes2' @('cliente-prueba-clientes2.js', 'navegador-prueba-clientes2.js')
-Ciclo 'maquinas2' @('cliente-prueba-maquinas2.js', 'navegador-prueba-maquinas2.js', 'navegador-colores.js')
+Ciclo 'maquinas2' @('cliente-prueba-maquinas2.js', 'navegador-prueba-maquinas2.js', 'navegador-colores.js', 'cliente-prueba-numeracion.js')
 
 if (Select-String -Path (Join-Path $raiz '.env') -Pattern '^KARVE_COPIA_CONNECTION_STRING=' -Quiet -ErrorAction SilentlyContinue) {
   Ciclo 'karve' @('cliente-prueba-karve.js', 'navegador-prueba-karve.js')
@@ -82,6 +82,8 @@ if (Select-String -Path (Join-Path $raiz '.env') -Pattern '^KARVE_COPIA_CONNECTI
 Write-Host "`n### Migración de roles (base sintética)" -ForegroundColor Green
 $env:RUTA_BD = Join-Path $tmp 'migracion.db'; $env:APP_USUARIO = 'jefe'
 Ejecutar-Script 'prueba-migracion-roles.js'
+$env:RUTA_BD = Join-Path $tmp 'numeracion.db'; $env:APP_USUARIO = 'admin_prueba'; $env:APP_CLAVE = 'clave-prueba-123'
+Ejecutar-Script 'prueba-numeracion-y-limpiar.js'
 
 if ($brv) { Stop-Process -Id $brv.Id -Force -ErrorAction SilentlyContinue; Matar-Puerto 9333 }
 

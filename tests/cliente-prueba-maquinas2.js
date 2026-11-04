@@ -18,7 +18,7 @@ async function login(usuario, clave) {
   return (r.headers.get('set-cookie') || '').split(';')[0];
 }
 const YY = String(new Date().getFullYear()).slice(-2);
-const RE_FLOTA = new RegExp(`^F-${YY}-\\d{4}$`);
+const RE_FLOTA = /^\d+$/; // F3.5-06: nº de flota numérico correlativo (sin F-YY-XXXX)
 
 (async () => {
   let x;
@@ -78,30 +78,30 @@ const RE_FLOTA = new RegExp(`^F-${YY}-\\d{4}$`);
   x = await pedir('/api/maquinas', { cookie: A });
   const maquinas = x.j;
   ok('GET /maquinas → estado, num_contrato y caracteristicas en todas (migración); todas con nº de flota', x.s === 200 && maquinas.every((m) => 'estado' in m && 'num_contrato' in m && 'caracteristicas' in m && m.num_flota), `n=${maquinas.length}`);
-  ok('seed: las que no tenían nº de flota llevan uno generado F-YY-XXXX; las de Karve conservan el suyo (IB-12)', maquinas.filter((m) => RE_FLOTA.test(m.num_flota)).length >= 5 && maquinas.some((m) => m.num_flota === 'IB-12'), `${maquinas.filter((m) => RE_FLOTA.test(m.num_flota)).map((m) => m.num_flota).join(',')}`);
+  ok('seed: las que no tenían nº de flota llevan uno numérico correlativo; las de Karve conservan el suyo (IB-12)', maquinas.filter((m) => RE_FLOTA.test(m.num_flota)).length >= 5 && maquinas.some((m) => m.num_flota === 'IB-12'), `${maquinas.filter((m) => RE_FLOTA.test(m.num_flota)).map((m) => m.num_flota).join(',')}`);
   ok('seed: estados variados y contratos solo fuera de cliente_final', maquinas.some((m) => m.estado === 'rent_to_rent' && m.num_contrato) && maquinas.some((m) => m.estado === 'propia') && maquinas.filter((m) => m.estado === 'cliente_final').every((m) => m.num_contrato === null));
-  const generadas = maquinas.filter((m) => RE_FLOTA.test(m.num_flota)).map((m) => Number(m.num_flota.slice(-4)));
+  const generadas = maquinas.filter((m) => RE_FLOTA.test(m.num_flota)).map((m) => Number(m.num_flota));
   const ultima = Math.max(...generadas);
   x = await pedir('/api/clientes', { cookie: A });
   const lezama = x.j.find((c) => c.nombre === 'Grúas Lezama');
 
   // Alta: nº de flota automático y robusto
   x = await pedir('/api/maquinas', { metodo: 'POST', cookie: R, body: { cliente_id: lezama.id, marca: 'Terex', modelo: 'AC 55', bastidor: 'w09-f304-001', num_flota: 'QUIERO-ESTE', estado: 'rent_to_rent', num_contrato: 'RR-2026-099', caracteristicas: 'Grúa 55 t' } });
-  ok(`POST (responsable_st) → 201 con nº de flota generado F-${YY}-${String(ultima + 1).padStart(4, '0')}, ignorando el enviado; estado y contrato guardados`, x.s === 201 && x.j.num_flota === `F-${YY}-${String(ultima + 1).padStart(4, '0')}` && x.j.estado === 'rent_to_rent' && x.j.num_contrato === 'RR-2026-099' && x.j.caracteristicas === 'Grúa 55 t' && x.j.bastidor === 'W09-F304-001', x.t);
+  ok(`POST (responsable_st) → 201 con nº de flota generado (${ultima + 1}), ignorando el enviado; estado y contrato guardados`, x.s === 201 && x.j.num_flota === String(ultima + 1) && x.j.estado === 'rent_to_rent' && x.j.num_contrato === 'RR-2026-099' && x.j.caracteristicas === 'Grúa 55 t' && x.j.bastidor === 'W09-F304-001', x.t);
   const m1 = x.j;
   x = await pedir('/api/maquinas', { metodo: 'POST', cookie: R, body: { cliente_id: lezama.id, marca: 'Terex', modelo: 'AC 100', num_contrato: 'NO-DEBE-QUEDAR' } });
-  ok('POST sin estado → cliente_final y el contrato se descarta; flota correlativa', x.s === 201 && x.j.estado === 'cliente_final' && x.j.num_contrato === null && x.j.num_flota === `F-${YY}-${String(ultima + 2).padStart(4, '0')}`, x.t);
+  ok('POST sin estado → cliente_final y el contrato se descarta; flota correlativa', x.s === 201 && x.j.estado === 'cliente_final' && x.j.num_contrato === null && x.j.num_flota === String(ultima + 2), x.t);
   const m2 = x.j;
   x = await pedir('/api/maquinas', { metodo: 'POST', cookie: R, body: { cliente_id: lezama.id, marca: 'X', estado: 'alquilada' } });
   ok('POST estado inválido → 400', x.s === 400 && /estado/.test(x.j.error), x.t);
   x = await pedir('/api/maquinas', { metodo: 'POST', cookie: R, body: { cliente_id: lezama.id } });
   ok('POST sin marca/modelo/bastidor → 400', x.s === 400, x.t);
   // Colisión: el administrativo pone a mano el siguiente número a una máquina; el generador lo salta
-  const siguiente = `F-${YY}-${String(ultima + 3).padStart(4, '0')}`;
+  const siguiente = String(ultima + 3);
   x = await pedir(`/api/maquinas/${m2.id}`, { metodo: 'PUT', cookie: A, body: { num_flota: siguiente } });
   ok('administrativo: PUT num_flota a mano → 200', x.s === 200 && x.j.num_flota === siguiente, x.t);
   x = await pedir('/api/maquinas', { metodo: 'POST', cookie: A, body: { cliente_id: lezama.id, marca: 'Terex', modelo: 'AC 160' } });
-  ok(`POST tras la colisión → salta al siguiente libre F-${YY}-${String(ultima + 4).padStart(4, '0')}`, x.s === 201 && x.j.num_flota === `F-${YY}-${String(ultima + 4).padStart(4, '0')}`, x.t);
+  ok(`POST tras la colisión → salta al siguiente libre (${ultima + 4})`, x.s === 201 && x.j.num_flota === String(ultima + 4), x.t);
   const m3 = x.j;
 
   // Edición restringida

@@ -4,13 +4,13 @@ Aplicación web para gestionar las **Órdenes de Trabajo (O.T.)** de reparación
 
 ## Qué hace
 
-- **Abre y sigue las O.T.**: cada orden tiene su número (`2026-0001`), su cliente, su máquina, su estado y su historial completo de cambios.
+- **Abre y sigue las O.T.**: cada orden tiene su número, el mismo que en Karve (`0000107951`), su cliente, su máquina, su estado y su historial completo de cambios.
 - **Tablero Kanban** para el responsable del taller: las O.T. se ven por fases (abierta, pendiente de repuesto, asignada, en curso, finalizada, pendiente de nº de pedido, visto bueno factura...).
 - **Vista para tablet** del técnico: solo ve sus O.T. asignadas, registra tiempos, checklist, fotos y firma del cliente.
 - **Recambios**: el almacén vincula los repuestos usados a cada O.T.
 - **Cierre y facturación**: parte de trabajo, albarán y reclamación automática del nº de pedido al cliente cuando lo exige.
 - **Clientes**: ficha con razón social, NIF/CIF, teléfono, dirección, contacto de compras, contacto técnico (recibe los partes), correo de envío de facturas, fecha de la última factura y comercial responsable; buscador rápido. Un cliente sin factura en los últimos 3 años pasa a "antiguo" y deja de salir en la lista (se puede ver con "Todos").
-- **Máquinas**: ficha con marca, modelo, bastidor, estado (propia, rent to rent, subalquilada o de cliente final), nº de contrato, características técnicas para el mecánico, horas y observaciones. El nº de flota lo asigna la aplicación al crearla (`F-26-0001`, correlativo por año; los antiguos de Karve se respetan). Tras el alta solo se cambian las horas y las observaciones; un administrativo puede corregir el resto. Desde la ficha del cliente se ven y se dan de alta sus máquinas. No se borran: se desactivan.
+- **Máquinas**: ficha con marca, modelo, bastidor, estado (propia, rent to rent, subalquilada o de cliente final), nº de contrato, características técnicas para el mecánico, horas y observaciones. El nº de flota es el código de la máquina en Karve; a una máquina creada a mano se le asigna el siguiente número. Tras el alta solo se cambian las horas y las observaciones; un administrativo puede corregir el resto. Desde la ficha del cliente se ven y se dan de alta sus máquinas. No se borran: se desactivan.
 - **Usuarios**: el administrador da de alta al personal (técnicos internos, SAT externos y oficina) con su usuario, rol y contraseña, y puede cambiarla o desactivar a quien se marcha sin perder su historial. Cada técnico lleva su código de operario en Karve para imputar horas más adelante.
 - **Integración con Karve** (el ERP): la aplicación lee de Karve, en solo lectura, los clientes con sus contactos, las máquinas, el comercial de cada cliente y la fecha de su última factura, con el botón "Sincronizar Karve" o cada noche de forma automática. Más adelante llegarán inventario, albaranes y numeración.
 - **Ayuda de IA**: redacta el parte para el cliente a partir de las notas del técnico y sugiere mantenimientos preventivos.

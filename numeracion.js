@@ -1,114 +1,113 @@
-// numeracion.js — Numeración de las Órdenes de Trabajo: AAAA-NNNN (ej. 2026-0001).
+// numeracion.js — Numeración de las Órdenes de Trabajo con el formato de Karve: secuencial de 10 dígitos
+// rellenado con ceros (0000107951), sin año. Decisión de Sendoa (2026-11-04): administración sigue abriendo
+// O.T. en el ERP, así que nuestras O.T. tienen que seguir la misma secuencia para que las encuentren después.
 //
-// El histórico real de números vive en Karve. Aquí se mantiene un contador por año en la tabla
-// `contadores` (clave 'ot-2026') solo para repartir números sin duplicados entre usuarios
-// concurrentes. Ese contador NO arranca ciegamente en 1: se fija con el último número real
-// (de momento a mano con CONTADOR_OT_INICIAL del .env o scripts/fijar-contador.js; en la
-// Fase 5, leyéndolo de Karve con fijarContador()).
+// Cómo se evita la colisión:
+//   - contador local 'ot' en la tabla `contadores` (reparte números sin duplicados entre usuarios concurrentes);
+//   - antes de cada alta, rutas-ot.js lee el máximo de Karve (kv_vOrdenesTrabajo) y se lo pasa como `minimo`:
+//     el número asignado es siempre MAX(contador, máximo de Karve, máximo local) + 1;
+//   - si Karve no responde, se usa el contador local (que se sincroniza al arrancar, en cada sincronización y
+//     con scripts/fijar-contador.js --karve), y queda un aviso en el log.
+// También vive aquí el nº de flota de máquinas (correlativo numérico, el mismo código que usa Karve).
 
 const { db, ahora } = require('./db');
+const karve = require('./karve');
 
-const ANCHO = 4; // 2026-0001
-
-function claveDe(anio) {
-  return `ot-${anio}`;
-}
+const ANCHO = 10;
+const CLAVE = 'ot';
 
 function anioActual() {
   return new Date().getFullYear();
 }
 
-function formatearNumero(anio, secuencia) {
-  return `${anio}-${String(secuencia).padStart(ANCHO, '0')}`;
+function formatearNumero(secuencia) {
+  return String(secuencia).padStart(ANCHO, '0');
 }
 
-// Mayor secuencia ya usada en la tabla ot para ese año (0 si no hay ninguna).
-function maxSecuenciaUsada(anio) {
-  const fila = db.prepare('SELECT MAX(secuencia) AS m FROM ot WHERE anio = ?').get(anio);
+// Mayor secuencia ya usada en la tabla ot (0 si no hay ninguna).
+function maxSecuenciaUsada() {
+  const fila = db.prepare('SELECT MAX(secuencia) AS m FROM ot').get();
   return fila && fila.m ? fila.m : 0;
 }
 
-// Valor actual del contador de un año, o null si todavía no existe.
-function leerContador(anio = anioActual()) {
-  const fila = db.prepare('SELECT valor FROM contadores WHERE clave = ?').get(claveDe(anio));
+// Valor actual del contador, o null si todavía no existe.
+function leerContador() {
+  const fila = db.prepare('SELECT valor FROM contadores WHERE clave = ?').get(CLAVE);
   return fila ? fila.valor : null;
 }
 
-// Valor con el que se crea el contador de un año la primera vez:
-// - año actual: CONTADOR_OT_INICIAL del .env (último número real conocido), o 0 si no está.
-// - otros años: 0 (la Fase 5 lo sustituirá por el valor de Karve).
-// Nunca por debajo de lo que ya haya en la tabla ot.
-function valorInicial(anio) {
-  let v = 0;
-  if (anio === anioActual()) {
-    const env = parseInt(process.env.CONTADOR_OT_INICIAL, 10);
-    if (Number.isInteger(env) && env > 0) v = env;
-  }
-  return Math.max(v, maxSecuenciaUsada(anio));
+// Valor con el que se crea el contador la primera vez: CONTADOR_OT_INICIAL del .env (último número real
+// conocido) o lo ya usado en la tabla ot, lo que sea mayor.
+function valorInicial() {
+  const env = parseInt(process.env.CONTADOR_OT_INICIAL, 10);
+  return Math.max(Number.isInteger(env) && env > 0 ? env : 0, maxSecuenciaUsada());
 }
 
-// Fija el contador de un año a un valor concreto (último número usado). Es el punto de entrada
-// para sincronizar con Karve: fijarContador(2026, ultimaSecuenciaEnKarve).
-// Por seguridad no se permite bajar por debajo de lo ya usado en la tabla ot salvo forzar=true.
-function fijarContador(anio, valor, { forzar = false } = {}) {
-  anio = parseInt(anio, 10);
+// Fija el contador a un valor concreto (último número usado). No se baja por debajo de lo ya usado salvo forzar.
+function fijarContador(valor, { forzar = false } = {}) {
   valor = parseInt(valor, 10);
-  if (!Number.isInteger(anio) || anio < 2000 || anio > 2100) throw new Error(`Año no válido: ${anio}`);
   if (!Number.isInteger(valor) || valor < 0) throw new Error(`Valor no válido: ${valor}`);
-  const usado = maxSecuenciaUsada(anio);
+  const usado = maxSecuenciaUsada();
   if (valor < usado && !forzar) {
-    throw new Error(`No se puede fijar el contador de ${anio} en ${valor}: ya existe la O.T. ${formatearNumero(anio, usado)}. Usa forzar si sabes lo que haces.`);
+    throw new Error(`No se puede fijar el contador en ${valor}: ya existe la O.T. ${formatearNumero(usado)}. Usa --forzar si sabes lo que haces.`);
   }
   db.prepare(`INSERT INTO contadores (clave, valor, actualizado) VALUES (?, ?, ?)
               ON CONFLICT(clave) DO UPDATE SET valor = excluded.valor, actualizado = excluded.actualizado`)
-    .run(claveDe(anio), valor, ahora());
-  return { anio, valor, proximo: formatearNumero(anio, valor + 1) };
+    .run(CLAVE, valor, ahora());
+  return { valor, proximo: formatearNumero(valor + 1) };
 }
 
-// Reserva y devuelve el siguiente número de O.T. del año. Transacción IMMEDIATE: toma el bloqueo
-// de escritura al empezar, así dos peticiones simultáneas nunca obtienen el mismo número.
-const siguienteNumeroOT = db.transaction((anio = anioActual()) => {
-  const clave = claveDe(anio);
-  let fila = db.prepare('SELECT valor FROM contadores WHERE clave = ?').get(clave);
+// Reserva y devuelve el siguiente número. Transacción IMMEDIATE: dos peticiones simultáneas nunca obtienen el
+// mismo número. `minimo` = máximo leído en Karve justo antes (rutas-ot.js); la secuencia nunca queda por debajo.
+const siguienteNumeroOT = db.transaction(({ minimo = 0 } = {}) => {
+  let fila = db.prepare('SELECT valor FROM contadores WHERE clave = ?').get(CLAVE);
   if (!fila) {
-    const inicial = valorInicial(anio);
-    db.prepare('INSERT INTO contadores (clave, valor, actualizado) VALUES (?, ?, ?)').run(clave, inicial, ahora());
+    const inicial = valorInicial();
+    db.prepare('INSERT INTO contadores (clave, valor, actualizado) VALUES (?, ?, ?)').run(CLAVE, inicial, ahora());
     fila = { valor: inicial };
   }
-  const secuencia = fila.valor + 1;
-  db.prepare('UPDATE contadores SET valor = ?, actualizado = ? WHERE clave = ?').run(secuencia, ahora(), clave);
-  return { anio, secuencia, numero: formatearNumero(anio, secuencia) };
+  const secuencia = Math.max(fila.valor, maxSecuenciaUsada(), Number(minimo) || 0) + 1;
+  db.prepare('UPDATE contadores SET valor = ?, actualizado = ? WHERE clave = ?').run(secuencia, ahora(), CLAVE);
+  return { secuencia, numero: formatearNumero(secuencia), anio: anioActual() };
 }).immediate;
 
-// Vista previa sin reservar (para mostrar "próximo número" en pantalla).
-function proximoNumero(anio = anioActual()) {
-  const actual = leerContador(anio);
-  const base = actual === null ? valorInicial(anio) : actual;
-  return formatearNumero(anio, base + 1);
+// Vista previa sin reservar.
+function proximoNumero() {
+  const actual = leerContador();
+  const base = actual === null ? valorInicial() : actual;
+  return formatearNumero(Math.max(base, maxSecuenciaUsada()) + 1);
+}
+
+// Máximo número de O.T. en Karve (solo los ids numéricos: hay 27 históricos con sufijo, p. ej. 0058757MO).
+// Devuelve null si no hay conexión configurada o no responde en `timeoutMs`.
+async function leerMaximoKarve({ entorno = 'copia', timeoutMs = 8000 } = {}) {
+  if (!karve.hayConfiguracion(entorno)) return null;
+  const consulta = karve.consultar('SELECT MAX(CAST(id AS BIGINT)) AS maximo FROM CV.kv_vOrdenesTrabajo WHERE ISNUMERIC(id) = 1', [], { entorno });
+  const tope = new Promise((_, rej) => setTimeout(() => rej(new Error(`Karve no responde en ${timeoutMs} ms`)), timeoutMs));
+  const { filas } = await Promise.race([consulta, tope]);
+  const m = filas[0] && filas[0].maximo;
+  return m === null || m === undefined ? null : Number(m);
+}
+
+// Sube el contador local hasta el máximo de Karve si está por debajo. Nunca lo baja.
+async function sincronizarContadorKarve({ entorno = 'copia', timeoutMs = 8000 } = {}) {
+  const maximoKarve = await leerMaximoKarve({ entorno, timeoutMs });
+  if (maximoKarve === null) return { maximoKarve: null, contador: leerContador(), proximo: proximoNumero(), actualizado: false };
+  const actual = Math.max(leerContador() ?? 0, maxSecuenciaUsada());
+  const actualizado = maximoKarve > actual;
+  if (actualizado) fijarContador(maximoKarve);
+  return { maximoKarve, contador: leerContador(), proximo: proximoNumero(), actualizado };
 }
 
 // ---------------------------------------------------------------------------
-// Nº de flota de máquinas (F3-04): F-YY-XXXX por año (F-26-0001), contador 'flota-2026' en la misma tabla.
-// Robusto: transacción IMMEDIATE (sin duplicados entre usuarios concurrentes), un contador por año y, si el
-// número generado ya existe en maquinas.num_flota (los antiguos de Karve se respetan tal cual), salta al siguiente.
+// Nº de flota de máquinas (F3.5-06): es el código numérico de la máquina en Karve (kv_vMaquinas.id sin ceros a la
+// izquierda, p. ej. 3641; crecerá a 5 cifras sin más). Para una máquina creada a mano se asigna el siguiente al mayor
+// numérico que haya en maquinas.num_flota; los códigos no numéricos (001854C, IB-12) no cuentan. Sin contador aparte:
+// el máximo real manda, así la sincronización con Karve y las altas manuales no se pisan.
 // ---------------------------------------------------------------------------
-function formatearFlota(anio, secuencia) {
-  return `F-${String(anio).slice(-2)}-${String(secuencia).padStart(4, '0')}`;
-}
-
-const siguienteNumeroFlota = db.transaction((anio = anioActual()) => {
-  const clave = `flota-${anio}`;
-  let fila = db.prepare('SELECT valor FROM contadores WHERE clave = ?').get(clave);
-  if (!fila) {
-    db.prepare('INSERT INTO contadores (clave, valor, actualizado) VALUES (?, 0, ?)').run(clave, ahora());
-    fila = { valor: 0 };
-  }
-  const existe = db.prepare('SELECT 1 FROM maquinas WHERE num_flota = ?');
-  let secuencia = fila.valor;
-  let numero;
-  do { secuencia++; numero = formatearFlota(anio, secuencia); } while (existe.get(numero));
-  db.prepare('UPDATE contadores SET valor = ?, actualizado = ? WHERE clave = ?').run(secuencia, ahora(), clave);
-  return numero;
+const siguienteNumeroFlota = db.transaction(() => {
+  const fila = db.prepare("SELECT MAX(CAST(num_flota AS INTEGER)) AS m FROM maquinas WHERE num_flota IS NOT NULL AND num_flota <> '' AND num_flota NOT GLOB '*[^0-9]*'").get();
+  return String((fila && fila.m ? fila.m : 0) + 1);
 }).immediate;
 
-module.exports = { siguienteNumeroOT, fijarContador, leerContador, proximoNumero, formatearNumero, anioActual, siguienteNumeroFlota, formatearFlota };
+module.exports = { siguienteNumeroOT, fijarContador, leerContador, proximoNumero, formatearNumero, anioActual, leerMaximoKarve, sincronizarContadorKarve, siguienteNumeroFlota };

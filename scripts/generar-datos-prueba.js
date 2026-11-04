@@ -1,12 +1,14 @@
-// scripts/generar-datos-prueba.js — Llena la base con datos ficticios realistas para ver la interfaz a pleno rendimiento.
+// scripts/generar-datos-prueba.js — Datos ficticios para desarrollo y pruebas, o purga para el entorno real.
 //
 //   node scripts/generar-datos-prueba.js            crea usuarios de prueba, 12 clientes, máquinas y 20 O.T. repartidas por el Kanban
-//   node scripts/generar-datos-prueba.js --limpiar  antes BORRA todas las O.T., máquinas y clientes (los usuarios se conservan)
 //   node scripts/generar-datos-prueba.js --anadir   añade otra tanda aunque ya haya datos (los clientes repetidos se reutilizan)
+//   node scripts/generar-datos-prueba.js --limpiar  PURGA para el entorno real (2026-11-04): vacía toda la base (O.T., máquinas,
+//                                                  clientes, contactos, sincronizaciones, sesiones, usuarios y contadores) y deja solo
+//                                                  el admin del .env (APP_USUARIO/APP_CLAVE), Nacho (comercial_jefe, Karve 0000023)
+//                                                  y Jon Ruiz (comercial, Karve 0000028), listo para "Sincronizar Karve". No inventa nada.
 //
-// Por seguridad no hace nada si ya hay clientes u O.T. y no se pasa --limpiar ni --anadir.
-// Usa la misma BD, numeración (siguienteNumeroOT) y forma de los datos que el servidor
-// (historial, asignaciones aprobadas, versiones). No hace falta parar el servidor.
+// Por seguridad, sin --limpiar ni --anadir no hace nada si ya hay clientes u O.T.
+// Los datos ficticios usan la misma BD, numeración (siguienteNumeroOT) y forma de los datos que el servidor.
 // Los usuarios de prueba que falten se crean con la contraseña que se muestra al final.
 
 const { db, ahora, hashClave } = require('../db');
@@ -21,6 +23,34 @@ if (args.includes('-h') || args.includes('--ayuda')) {
 const limpiar = args.includes('--limpiar');
 const anadir = args.includes('--anadir');
 const CLAVE_PRUEBA = 'prueba123';
+
+// ---------------------------------------------------------------------------
+// --limpiar: purga total + usuarios mínimos del entorno real. Termina aquí.
+// ---------------------------------------------------------------------------
+if (limpiar) {
+  const adminUsuario = (process.env.APP_USUARIO || '').trim();
+  const adminClave = process.env.APP_CLAVE || '';
+  if (!adminUsuario || !adminClave) { console.error('Faltan APP_USUARIO / APP_CLAVE en el .env: hacen falta para recrear el administrador.'); process.exit(1); }
+  const claveInicial = require('crypto').randomBytes(6).toString('base64url'); // una vez; se cambia desde Usuarios
+  const USUARIOS_REALES = [
+    ['nacho', 'Nacho', 'comercial_jefe', '0000023'],
+    ['jruiz', 'Jon Ruiz', 'comercial', '0000028'],
+  ];
+  const purgar = db.transaction(() => {
+    for (const t of ['ot_asignaciones', 'ot_historial', 'ot', 'maquinas', 'cliente_contactos', 'clientes', 'sincronizaciones', 'sesiones', 'usuarios', 'contadores']) db.exec(`DELETE FROM ${t}`);
+    db.exec("DELETE FROM sqlite_sequence");
+    const ins = db.prepare('INSERT INTO usuarios (usuario, nombre, clave_hash, rol, karve_id) VALUES (?, ?, ?, ?, ?)');
+    ins.run(adminUsuario, 'Administrador', hashClave(adminClave), 'administrativo', null);
+    for (const [usuario, nombre, rol, karveId] of USUARIOS_REALES) ins.run(usuario, nombre, hashClave(claveInicial), rol, karveId);
+  });
+  purgar.immediate();
+  db.exec('VACUUM');
+  console.log('✅ Base purgada: 0 clientes, 0 máquinas, 0 O.T., 0 contactos; contadores a cero.');
+  console.log(`   Usuarios: ${adminUsuario} (administrativo, contraseña del .env), nacho (comercial_jefe, Karve 0000023) y jruiz (comercial, Karve 0000028).`);
+  console.log(`   Contraseña inicial de nacho y jruiz: ${claveInicial}  (cámbiala desde Usuarios)`);
+  console.log('   Siguiente paso: reiniciar el servidor y pulsar Maestros → Sincronizar Karve (o node scripts/karve-sincronizar.js).');
+  process.exit(0);
+}
 
 // ---------------------------------------------------------------------------
 // Datos ficticios
@@ -179,8 +209,8 @@ const elegir = (lista, i) => lista[i % lista.length];
 // ---------------------------------------------------------------------------
 const nClientes = db.prepare('SELECT COUNT(*) n FROM clientes').get().n;
 const nOT = db.prepare('SELECT COUNT(*) n FROM ot').get().n;
-if ((nClientes || nOT) && !limpiar && !anadir) {
-  console.error(`La base ya tiene ${nClientes} clientes y ${nOT} O.T. Usa --limpiar (borra O.T., máquinas y clientes) o --anadir (añade otra tanda).`);
+if ((nClientes || nOT) && !anadir) {
+  console.error(`La base ya tiene ${nClientes} clientes y ${nOT} O.T. Usa --anadir (añade otra tanda) o --limpiar (purga total para el entorno real, sin datos ficticios).`);
   process.exit(1);
 }
 
@@ -190,11 +220,6 @@ if (!admin) { console.error('No hay ningún administrativo ni responsable activo
 const resumen = { usuariosCreados: [], clientes: 0, maquinas: 0, ots: 0, porFase: {} };
 
 const generar = db.transaction(() => {
-  if (limpiar) {
-    for (const t of ['ot_asignaciones', 'ot_historial', 'ot', 'maquinas', 'clientes']) db.exec(`DELETE FROM ${t}`);
-    console.log('   Borradas todas las O.T., máquinas y clientes.');
-  }
-
   // Usuarios de prueba (solo los que falten)
   const usuarioPor = {};
   const insUsuario = db.prepare('INSERT INTO usuarios (usuario, nombre, clave_hash, rol, email, karve_id, activo) VALUES (?, ?, ?, ?, ?, ?, ?)');
@@ -241,7 +266,7 @@ const generar = db.transaction(() => {
       if (existente) { maquinaIds[idx].push(existente.id); return; }
       const karveId = cliente[6] === 'karve' ? `M${String(100 + Number(idx) * 10 + j).padStart(6, '0')}` : null;
       const [estado, contrato] = ESTADO_MAQUINA[bastidor] || ['cliente_final', null];
-      // Sin nº de flota del cliente → se genera el de Vibacar (F-YY-XXXX); los de Karve se respetan.
+      // Sin nº de flota → el siguiente numérico (como una alta manual); los que traen uno (IB-12…) se respetan.
       const info = insMaquina.run(clienteIds[idx], marca, modelo, bastidor, flota || siguienteNumeroFlota(), horas, karveId, karveId ? 'karve' : 'manual', OBSERVACIONES[bastidor] || null, MAQUINAS_INACTIVAS.has(bastidor) ? 0 : 1, estado, contrato, CARACTERISTICAS[bastidor] || null, fmt(fechaHace(55 - Number(idx) * 3, 10, j * 11)));
       maquinaIds[idx].push(info.lastInsertRowid);
       resumen.maquinas++;
@@ -264,7 +289,7 @@ const generar = db.transaction(() => {
     enElDia = dias === diaAnterior ? enElDia + 1 : 0; // varias O.T. el mismo día: horas crecientes para que el número siga la cronología
     diaAnterior = dias;
     const creado = fechaHace(dias, 8 + enElDia * 2, i * 9);
-    const num = siguienteNumeroOT(creado.getFullYear());
+    const num = siguienteNumeroOT(); // formato Karve (10 dígitos), correlativo con el contador local
     const pasosTotales = camino.length;
     const asignada = camino.includes('asignada') && tecnico;
     const version = 1 + pasosTotales + (asignada ? 1 : 0);
@@ -272,7 +297,7 @@ const generar = db.transaction(() => {
     let fecha = new Date(creado);
     const ultima = () => fmt(fecha);
     const maquinaId = mi === null ? null : maquinaIds[ci][mi] ?? null;
-    const info = insOT.run(num.numero, num.anio, num.secuencia, clienteIds[ci], maquinaId, 'abierta', prioridad, tipo, origen, sintoma, descripcion, notas, null, admin.id, fmt(creado), null, 1);
+    const info = insOT.run(num.numero, creado.getFullYear(), num.secuencia, clienteIds[ci], maquinaId, 'abierta', prioridad, tipo, origen, sintoma, descripcion, notas, null, admin.id, fmt(creado), null, 1);
     const otId = info.lastInsertRowid;
     insHist.run(otId, null, 'abierta', admin.id, fmt(creado), 'Apertura de la O.T.');
 

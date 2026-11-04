@@ -36,6 +36,17 @@ module.exports = function montarRutasMaestros(app) {
   // se gestiona desde la API: la columna se conserva y las bajas heredadas solo aparecen con ?todos=1.
   // -------------------------------------------------------------------------
   const soloMisClientes = (req) => alcanceDe(req.usuario.rol) === 'clientes_propios';
+
+  // Paginación opcional de los listados (F3.5-06): con ?pagina=N (y ?limite=, 50 por defecto, máximo 500) se devuelve
+  // { total, pagina, limite, paginas, filas }; sin ?pagina, la lista entera (máximo 5.000) para selectores y scripts.
+  function responderLista(req, res, sqlBase, orden, params) {
+    const pagina = entero(req.query.pagina, { nombre: 'pagina', min: 1 });
+    if (!pagina) return res.json(db.prepare(`${sqlBase} ${orden} LIMIT 5000`).all(...params));
+    const limite = Math.min(entero(req.query.limite, { nombre: 'limite', min: 1 }) ?? 50, 500);
+    const total = db.prepare(`SELECT COUNT(*) AS n FROM (${sqlBase})`).get(...params).n;
+    const filas = db.prepare(`${sqlBase} ${orden} LIMIT ? OFFSET ?`).all(...params, limite, (pagina - 1) * limite);
+    res.json({ total, pagina, limite, paginas: Math.max(1, Math.ceil(total / limite)), filas });
+  }
   // F3.5-04: antiguo = última factura hace más de 3 años, o sin factura y alta (creado) hace más de 3 años.
   const ANTIGUO_SQL = "((c.ultima_factura IS NOT NULL AND c.ultima_factura < date('now', '-3 years')) OR (c.ultima_factura IS NULL AND c.creado < date('now', '-3 years')))";
   const COLUMNAS_CLIENTE = `c.*, v.nombre AS comercial_nombre, CASE WHEN ${ANTIGUO_SQL} THEN 1 ELSE 0 END AS antiguo`;
@@ -52,8 +63,7 @@ module.exports = function montarRutasMaestros(app) {
       sql += ' AND (c.nombre LIKE ? OR c.cif LIKE ? OR c.karve_id LIKE ? OR c.email LIKE ? OR c.telefono LIKE ? OR c.compras_nombre LIKE ? OR c.tecnico_nombre LIKE ?)';
       p.push(`%${q}%`, `%${q}%`, `%${q}%`, `%${q}%`, `%${q}%`, `%${q}%`, `%${q}%`);
     }
-    sql += ` ORDER BY c.activo DESC, ${ANTIGUO_SQL} ASC, c.nombre COLLATE NOCASE LIMIT 5000`; // antiguos y bajas al final
-    res.json(db.prepare(sql).all(...p));
+    responderLista(req, res, sql, `ORDER BY c.activo DESC, ${ANTIGUO_SQL} ASC, c.nombre COLLATE NOCASE`, p); // antiguos y bajas al final
   });
 
   // Comerciales activos (comercial o jefe comercial), para el selector "Comercial responsable" de la ficha del cliente.
@@ -136,7 +146,7 @@ module.exports = function montarRutasMaestros(app) {
   // `activo`; `origen` (manual | karve) y `karve_id` los fijará la sincronización, no la API.
   // Cada máquina pertenece a un cliente, y solo se asigna (o se cambia) a un cliente activo.
   // F3-04: `estado` (propia | rent_to_rent | subalquilada | cliente_final), `num_contrato` (nunca con cliente_final),
-  // `caracteristicas`; nº de flota automático F-YY-XXXX al crear (numeracion.js); tras el alta solo se editan horas,
+  // `caracteristicas`; nº de flota automático al crear (siguiente al mayor numérico; en Karve es el código de la máquina); tras el alta solo se editan horas,
   // observaciones y activo, salvo el rol administrativo, que puede corregir el resto (403 para los demás).
   // -------------------------------------------------------------------------
   const COLUMNAS_MAQUINA = `m.*, c.nombre AS cliente_nombre, c.activo AS cliente_activo, c.comercial_id AS cliente_comercial_id,
@@ -156,8 +166,7 @@ module.exports = function montarRutasMaestros(app) {
       sql += ' AND (m.marca LIKE ? OR m.modelo LIKE ? OR m.bastidor LIKE ? OR m.num_flota LIKE ? OR m.num_contrato LIKE ? OR m.karve_id LIKE ? OR c.nombre LIKE ?)';
       p.push(`%${q}%`, `%${q}%`, `%${q}%`, `%${q}%`, `%${q}%`, `%${q}%`, `%${q}%`);
     }
-    sql += ' ORDER BY m.activo DESC, c.nombre COLLATE NOCASE, m.marca COLLATE NOCASE, m.modelo COLLATE NOCASE LIMIT 5000';
-    res.json(db.prepare(sql).all(...p));
+    responderLista(req, res, sql, 'ORDER BY m.activo DESC, c.nombre COLLATE NOCASE, m.marca COLLATE NOCASE, m.modelo COLLATE NOCASE', p);
   });
 
   r.get('/maquinas/:id', requierePermiso('maquinas.ver'), (req, res) => {
@@ -214,7 +223,7 @@ module.exports = function montarRutasMaestros(app) {
     if (!m.marca && !m.modelo && !m.bastidor) throw new ErrorHttp(400, 'Indica al menos marca, modelo o bastidor');
     comprobarBastidorLibre(m.bastidor);
     if (m.estado === 'cliente_final') m.num_contrato = null;
-    m.num_flota = siguienteNumeroFlota(); // F-YY-XXXX
+    m.num_flota = siguienteNumeroFlota(); // siguiente al mayor nº de flota numérico
     const info = db.prepare(`INSERT INTO maquinas (cliente_id, marca, modelo, bastidor, num_flota, estado, num_contrato, caracteristicas, horometro_ultimo, observaciones, karve_id, origen)
                              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'manual')`)
       .run(m.cliente_id, m.marca, m.modelo, m.bastidor, m.num_flota, m.estado, m.num_contrato, m.caracteristicas, m.horometro_ultimo, m.observaciones, m.karve_id);

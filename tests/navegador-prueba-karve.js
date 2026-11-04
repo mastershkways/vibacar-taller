@@ -87,7 +87,18 @@ const botonSync = (p) => evaluar(p, `!!document.querySelector('#nav .menu-lista 
   await sinModal(p);
 
   await evaluar(p, `location.hash = 'clientes'`);
-  await esperarHasta(p, `location.hash === '#clientes' && document.querySelectorAll('.tabla tbody tr').length > 50`);
+  await esperarHasta(p, `location.hash === '#clientes' && document.querySelectorAll('.tabla tbody tr').length === 50`);
+  ok('clientes: 50 filas por página y controles "x–y de total · página 1 de N"', (await evaluar(p, `document.querySelectorAll('.tabla tbody tr').length`)) === 50 && (await evaluar(p, `/1–50 de [\\d.]+ · página 1 de \\d+/.test(document.querySelector('[data-ref="paginacion"]').textContent)`)), await evaluar(p, `document.querySelector('[data-ref="paginacion"]').textContent`));
+  const primeraFila = await evaluar(p, `document.querySelector('.tabla tbody tr').textContent`);
+  await evaluar(p, `document.querySelector('[data-ref="paginacion"] [data-accion="sig"]').click()`);
+  ok('clientes: › pasa a la página 2 con otras filas', await esperarHasta(p, `/página 2 de/.test(document.querySelector('[data-ref="paginacion"]').textContent) && document.querySelector('.tabla tbody tr').textContent !== ${JSON.stringify(primeraFila)}`));
+  await evaluar(p, `document.querySelector('[data-ref="paginacion"] [data-accion="ant"]').click()`);
+  await esperarHasta(p, `/página 1 de/.test(document.querySelector('[data-ref="paginacion"]').textContent)`);
+  await evaluar(p, `location.hash = 'maquinas'`);
+  ok('máquinas: 50 filas por página, contador con miles y nº de flota = código de Karve', await esperarHasta(p, `location.hash === '#maquinas' && document.querySelectorAll('.tabla tbody tr').length === 50 && /^\\d[\\d.]* máquinas$/.test(document.querySelector('[data-ref="contador"]').textContent) && [...document.querySelectorAll('.tabla tbody tr')].every(tr => /^\\d+$|^[A-Z0-9-]+$/.test(tr.children[2].textContent))`), await evaluar(p, `document.querySelector('[data-ref="contador"]').textContent`));
+  await captura(p, '04-maquinas-paginadas');
+  await evaluar(p, `location.hash = 'clientes'`);
+  await esperarHasta(p, `location.hash === '#clientes' && document.querySelectorAll('.tabla tbody tr').length === 50`);
   await evaluar(p, `(() => { const el = document.querySelector('[name=q]'); el.value = 'ALDAITURRIAGA'; el.dispatchEvent(new Event('input', { bubbles: true })); })()`);
   ok('clientes: buscar ALDAITURRIAGA → 1 fila con última factura 30/09/2026', await esperarHasta(p, `document.querySelectorAll('.tabla tbody tr').length === 1 && /30\\/09\\/2026/.test(document.querySelector('.tabla tbody tr').textContent)`));
   await evaluar(p, `document.querySelector('.tabla tbody tr').click()`);
