@@ -272,7 +272,7 @@ async function sincronizar({ entorno = 'copia', origen = 'manual', usuarioId = n
 }
 
 function ultimaSincronizacion() {
-  const f = db.prepare('SELECT s.id, s.inicio, s.fin, s.origen, s.estado, s.mensaje, s.resumen, u.nombre AS usuario FROM sincronizaciones s LEFT JOIN usuarios u ON u.id = s.usuario_id ORDER BY s.id DESC LIMIT 1').get();
+  const f = db.prepare('SELECT s.id, s.inicio, s.fin, s.origen, s.estado, s.mensaje, s.resumen, u.nombre AS usuario FROM sincronizaciones s LEFT JOIN usuarios u ON u.id = s.usuario_id WHERE s.origen NOT LIKE \'ot-%\' ORDER BY s.id DESC LIMIT 1').get();
   if (!f) return null;
   let resumen = null; try { resumen = JSON.parse(f.resumen); } catch {}
   return { ...f, resumen };

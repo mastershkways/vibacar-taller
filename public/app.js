@@ -24,6 +24,7 @@ const S = {
   tecnicos: null,
 };
 
+const DIAS_CERRADAS = 7;     // F3.6-02: la columna de cerradas del Tablero solo enseña las de estos últimos días
 const POLLING_MS = 10000;
 const PRIORIDADES = { 1: 'Alta', 2: 'Media', 3: 'Baja' };
 const app = document.getElementById('app');
@@ -46,6 +47,11 @@ function fecha(iso) {
   const [d, h] = String(iso).split(' ');
   const [a, m, dia] = d.split('-');
   return `${dia}/${m}/${a}${h ? ' ' + h.slice(0, 5) : ''}`;
+}
+
+// Técnico de la O.T.; si no hay usuario local pero viene de Karve, el operario de Karve como referencia (F3.6-01).
+function nombreTecnico(o) {
+  return o.tecnico_nombre || (o.karve_operario ? `${o.karve_operario} (Karve)` : '');
 }
 
 function textoMaquina(o) {
@@ -392,11 +398,12 @@ function pintarKanban() {
   $('[data-accion="recargar"]', app).onclick = () => { S.kanban.etag = null; cargarKanban(); };
   const cont = ref('columnas', app);
   cont.innerHTML = '';
-  for (const f of S.fases.filter((x) => x.abierta)) {
+  for (const f of S.fases) {
     const col = document.createElement('div');
     col.className = 'columna';
     col.dataset.fase = f.codigo;
-    col.innerHTML = `<h3>${esc(f.nombre)} <span data-ref="n">0</span></h3><div class="cuerpo" data-ref="cuerpo"></div>`;
+    if (!f.abierta) col.classList.add('cerradas'); // F3.6-02: solo las cerradas en los últimos días; el histórico está en el Listado
+    col.innerHTML = `<h3>${esc(f.nombre)} <span data-ref="n">0</span>${f.abierta ? '' : `<small>últimos ${DIAS_CERRADAS} días</small>`}</h3><div class="cuerpo" data-ref="cuerpo"></div>`;
     prepararSoltar(col);
     cont.append(col);
   }
@@ -409,7 +416,7 @@ async function cargarKanban() {
   if (S.vista !== 'kanban' || S.kanban.cargando) return;
   S.kanban.cargando = true;
   try {
-    const datos = await api('/api/kanban', { headers: S.kanban.etag ? { 'If-None-Match': S.kanban.etag } : {} });
+    const datos = await api(`/api/kanban?cerradas=${DIAS_CERRADAS}`, { headers: S.kanban.etag ? { 'If-None-Match': S.kanban.etag } : {} });
     if (datos._304) return;
     S.kanban.etag = datos._etag;
     S.kanban.datos = datos;
@@ -425,7 +432,10 @@ function pintarColumnas() {
   const datos = S.kanban.datos;
   if (!datos || S.vista !== 'kanban') return;
   const cont = ref('contador', app);
-  if (cont) cont.textContent = `${datos.total} O.T. abiertas · ${fecha(datos.generado)}`;
+  if (cont) {
+    const cerradas = datos.fases.filter((f) => !f.abierta).reduce((n, f) => n + f.ots.length, 0);
+    cont.textContent = `${datos.total - cerradas} O.T. abiertas${cerradas ? ` · ${cerradas} cerradas en ${datos.dias_cerradas} días` : ''} · ${fecha(datos.generado)}`;
+  }
   for (const f of datos.fases) {
     const col = $(`.columna[data-fase="${f.codigo}"]`, app);
     if (!col) continue;
@@ -442,11 +452,11 @@ function tarjetaKanban(o) {
   el.dataset.id = o.id;
   el.style.borderLeftColor = (S.estadoPor[o.estado] || {}).color || '#6b7280';
   el.innerHTML = `
-    <div class="num">${chipPrioridad(o.prioridad)}${esc(o.numero)} <small>${esc(o.tipo)}</small></div>
+    <div class="num">${chipPrioridad(o.prioridad)}${esc(o.numero)} <small>${esc(o.tipo)}${o.karve_estado ? ' · ' + esc(o.karve_estado) : ''}</small></div>
     <div class="cliente">${esc(o.cliente_nombre)}</div>
     ${o.maquina_id ? `<div class="maquina">${esc(textoMaquina(o))}</div>` : ''}
     ${o.sintoma ? `<div class="sintoma" title="${esc(o.sintoma)}">${esc(o.sintoma)}</div>` : ''}
-    ${o.tecnico_nombre ? `<div class="tecnico">${esc(o.tecnico_nombre)}</div>` : ''}`;
+    ${nombreTecnico(o) ? `<div class="tecnico">${esc(nombreTecnico(o))}</div>` : ''}`;
   el.onclick = () => abrirDetalle(o.id);
   if (puede('ot.cambiar_estado') && destinosDesde(o.estado).length) {
     el.draggable = true;
@@ -600,7 +610,7 @@ async function cargarListado() {
         <td>${esc(o.sintoma || '')}</td>
         <td>${chipEstado(o)}</td>
         <td>${chipPrioridad(o.prioridad)}${esc(PRIORIDADES[o.prioridad] || '')}</td>
-        <td>${esc(o.tecnico_nombre || '')}</td>
+        <td>${esc(nombreTecnico(o))}</td>
         <td>${esc(fecha(o.creado))}</td>`;
       tr.onclick = () => abrirDetalle(o.id);
       filas.append(tr);
@@ -1206,8 +1216,12 @@ function pintarDetalle(nodo, ot) {
   ref('prioridad', nodo).textContent = `Prioridad ${PRIORIDADES[ot.prioridad] || ot.prioridad}`;
   ref('cliente', nodo).textContent = ot.cliente_nombre + (ot.exige_pedido ? ' · exige Nº pedido' : '');
   ref('maquina', nodo).textContent = textoMaquina(ot) || '—';
-  ref('tecnico', nodo).textContent = ot.tecnico_nombre || 'Sin asignar';
-  ref('creado', nodo).textContent = `${fecha(ot.creado)}${ot.creado_por_nombre ? ' · ' + ot.creado_por_nombre : ''}`;
+  ref('tecnico', nodo).textContent = ot.tecnico_nombre || (ot.karve_operario ? `${ot.karve_operario} (operario en Karve, sin usuario en la app)` : 'Sin asignar');
+  ref('creado', nodo).textContent = `${fecha(ot.creado)}${ot.creado_por_nombre ? ' · ' + ot.creado_por_nombre : ''}${ot.fecha_cierre ? ' · cerrada ' + fecha(ot.fecha_cierre) : ''}`;
+  // F3.6-01: lo que dice Karve de una O.T. importada (su estado y la fecha prevista), como referencia.
+  const enKarve = [ot.karve_estado ? `estado ${ot.karve_estado}` : null, ot.fecha_prevista ? `prevista ${fecha(ot.fecha_prevista)}` : null].filter(Boolean);
+  ref('fila-karve', nodo).classList.toggle('oculto', !enKarve.length);
+  ref('karve', nodo).textContent = enKarve.join(' · ');
 
   // Datos editables (PUT con version → 409 si otro la cambió).
   const form = ref('form-datos', nodo);

@@ -76,7 +76,7 @@ Ciclo 'clientes2' @('cliente-prueba-clientes2.js', 'navegador-prueba-clientes2.j
 Ciclo 'maquinas2' @('cliente-prueba-maquinas2.js', 'navegador-prueba-maquinas2.js', 'navegador-colores.js', 'cliente-prueba-numeracion.js')
 
 if (Select-String -Path (Join-Path $raiz '.env') -Pattern '^KARVE_COPIA_CONNECTION_STRING=' -Quiet -ErrorAction SilentlyContinue) {
-  Ciclo 'karve' @('cliente-prueba-karve.js', 'navegador-prueba-karve.js')
+  Ciclo 'karve' @('cliente-prueba-karve.js', 'cliente-prueba-importar-ot.js', 'navegador-prueba-karve.js')
 } else { $script:resumen += 'ciclo karve : omitido (sin KARVE_COPIA_CONNECTION_STRING en el .env)' }
 
 Write-Host "`n### Migración de roles (base sintética)" -ForegroundColor Green

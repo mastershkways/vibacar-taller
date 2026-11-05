@@ -219,7 +219,7 @@ CREATE TABLE IF NOT EXISTS sincronizaciones (
   id          INTEGER PRIMARY KEY AUTOINCREMENT,
   inicio      TEXT    NOT NULL,
   fin         TEXT,
-  origen      TEXT    NOT NULL,              -- manual (botón) | cron (script programado) | prueba
+  origen      TEXT    NOT NULL,              -- manual (botón) | cron (script programado) | prueba | ot-manual / ot-cron (importación de O.T.)
   usuario_id  INTEGER REFERENCES usuarios(id),
   estado      TEXT    NOT NULL,              -- ok | error
   resumen     TEXT,                          -- JSON con contadores y avisos
@@ -260,6 +260,11 @@ const COLUMNAS_NUEVAS = [
   ['maquinas', 'num_contrato', 'TEXT'],
   ['maquinas', 'caracteristicas', 'TEXT'],
   ['maquinas', 'observaciones', 'TEXT'],
+  // Fase 3.6 (F3.6-01): O.T. importadas de Karve (su estado y operario como referencia, fecha prevista) y fecha de cierre (F3.6-02).
+  ['ot', 'karve_estado', 'TEXT'],
+  ['ot', 'karve_operario', 'TEXT'],
+  ['ot', 'fecha_prevista', 'TEXT'],
+  ['ot', 'fecha_cierre', 'TEXT'],
 ];
 
 function asegurarColumna(tabla, columna, definicion) {

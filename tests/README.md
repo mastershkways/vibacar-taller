@@ -10,13 +10,15 @@ powershell -ExecutionPolicy Bypass -File tests\ejecutar-fase3.ps1
 
 Opciones: `-SinNavegador` (solo HTTP y migración), `-Brave "C:\ruta\brave.exe"` (por defecto Brave en `Program Files`; vale Chrome o Edge). Las bases temporales, los logs del servidor y el perfil del navegador van a `%TEMP%\vibacar-taller-pruebas`; las capturas a `tests/capturas-*/` (ignoradas por git).
 
-El lanzador ejecuta dos ciclos con base limpia y la prueba de migración:
+El lanzador ejecuta tres ciclos con base limpia (el de Karve solo si el `.env` tiene `KARVE_COPIA_CONNECTION_STRING`) y dos pruebas sueltas sobre bases sintéticas:
 
 | Ciclo | Base | Scripts | Qué cubre |
 |---|---|---|---|
-| clientes2 | seed | `cliente-prueba-clientes2.js` (29) + `navegador-prueba-clientes2.js` (31) | F3-02 menú Maestros, pantallas sin avisos ni chips; F3-03 clientes v2, contactos, regla de 3 años |
-| maquinas2 | seed | `cliente-prueba-maquinas2.js` (46) + `navegador-prueba-maquinas2.js` (23) + `navegador-colores.js` (8) | F3-04 máquinas v2, nº de flota automático, edición restringida; F3-05 roles y alcances; F3-01 colores |
-| migración | sintética | `prueba-migracion-roles.js` (6) | F3-05: `admontaller`/`financiero` → roles nuevos en usuarios y transiciones |
+| clientes2 | seed | `cliente-prueba-clientes2.js` + `navegador-prueba-clientes2.js` | F3-02 menú Maestros, pantallas sin avisos ni chips; F3-03 clientes v2, contactos, regla de 3 años |
+| maquinas2 | seed | `cliente-prueba-maquinas2.js` + `navegador-prueba-maquinas2.js` + `navegador-colores.js` + `cliente-prueba-numeracion.js` | F3-04 máquinas v2, nº de flota, edición restringida; F3-05 roles y alcances; F3-01 colores; F3.5-05 numeración de O.T. con Karve |
+| karve | seed + Karve real | `cliente-prueba-karve.js` + `cliente-prueba-importar-ot.js` + `navegador-prueba-karve.js` | F3.5-03/04 sincronización de clientes, contactos y máquinas; F3.5-06 nº de flota y paginación; F3.6-01 importación de O.T. vivas; F3.6-02 cerradas recientes en el Kanban |
+| migración | sintética | `prueba-migracion-roles.js` | F3-05: `admontaller`/`financiero` → roles nuevos en usuarios y transiciones |
+| numeración | sintética | `prueba-numeracion-y-limpiar.js` | F3.5-05: migración `AAAA-NNNN` → 10 dígitos, generador con mínimo de Karve, `fijar-contador`, purga `--limpiar` |
 
 Cada script imprime una línea por comprobación (`OK` / `FALLO`) y un resumen `n/m OK, k fallos`. Los de navegador también listan errores de consola y respuestas 4xx/5xx (las esperadas, como el 409 de un bastidor repetido, aparecen ahí).
 

@@ -249,9 +249,11 @@ input.mayusculas { text-transform: uppercase; }
 .prio-3 { background: var(--ok); }
 
 /* --- 4.4 Kanban ----------------------------------------------------------- */
-.kanban { display: flex; gap: 14px; overflow-x: auto; padding-bottom: 14px; align-items: flex-start; min-height: 60vh; }
+/* F3.6: con cientos de tarjetas reales, las columnas tienen ancho fijo (ni crecen ni encogen) y el tablero se desplaza en horizontal;
+   las palabras largas sin espacios (referencias, bastidores) se parten en vez de ensanchar la columna. */
+.kanban { display: flex; flex-wrap: nowrap; gap: 14px; overflow-x: auto; overflow-y: hidden; padding-bottom: 14px; align-items: flex-start; min-height: 60vh; }
 .columna {
-  flex: 0 0 276px; background: var(--fondo-2); border: 1px solid var(--borde);
+  flex: 0 0 320px; min-width: 320px; max-width: 320px; box-sizing: border-box; background: var(--fondo-2); border: 1px solid var(--borde);
   border-radius: var(--radio-l); padding: 10px;
   display: flex; flex-direction: column; max-height: calc(100vh - var(--alto-cabecera) - 100px);
   transition: var(--transicion);
@@ -265,13 +267,15 @@ input.mayusculas { text-transform: uppercase; }
   padding: 1px 9px; font-size: 12px; color: var(--texto); min-width: 26px; text-align: center;
 }
 .columna .cuerpo {
-  overflow-y: auto; display: flex; flex-direction: column; gap: 10px; min-height: 60px; flex: 1;
+  overflow-y: auto; overflow-x: hidden; display: flex; flex-direction: column; gap: 10px; min-height: 60px; flex: 1; min-width: 0;
   border-radius: 10px; padding: 2px; transition: var(--transicion);
 }
 .columna.destino-ok { border-color: var(--ok-borde); }
 .columna.destino-ok .cuerpo { background: var(--ok-fondo); outline: 2px dashed var(--ok); animation: pulso 1.2s ease-in-out infinite; }
 .columna.destino-no { opacity: .55; }
 .columna.destino-no .cuerpo { background: var(--error-fondo); outline: 2px dashed var(--error-borde); }
+.columna.cerradas h3 small { display: block; font-weight: 500; font-size: 11px; color: var(--texto-tenue); text-transform: none; letter-spacing: 0; } /* F3.6-02 */
+.columna.cerradas .tarjeta { opacity: .75; }
 
 .tarjeta {
   background: var(--tarjeta); border-radius: 10px; padding: 12px 14px;
@@ -280,13 +284,15 @@ input.mayusculas { text-transform: uppercase; }
   cursor: pointer; user-select: none;
   transition: var(--transicion);
 }
+.tarjeta { min-width: 0; max-width: 100%; overflow-wrap: anywhere; word-break: break-word; }
 .tarjeta:hover { box-shadow: var(--sombra-2); transform: translateY(-2px); }
 .tarjeta[draggable=true] { cursor: grab; }
 .tarjeta[draggable=true]:active { cursor: grabbing; }
 .tarjeta.agarrada { transform: scale(1.04) rotate(1deg); box-shadow: var(--sombra-3); }     /* imagen que acompaña al ratón */
 .tarjeta.arrastrando { opacity: .35; transform: none; box-shadow: none; border-style: dashed; } /* hueco que deja en la columna */
 .tarjeta .num { font-weight: 700; font-size: 14px; display: flex; justify-content: space-between; align-items: center; }
-.tarjeta .num small { font-weight: 500; color: var(--texto-tenue); font-size: 11px; text-transform: uppercase; letter-spacing: .04em; }
+.tarjeta .num { overflow-wrap: normal; word-break: normal; gap: 8px; }   /* el nº de O.T. nunca se parte */
+.tarjeta .num small { font-weight: 500; color: var(--texto-tenue); font-size: 11px; text-transform: uppercase; letter-spacing: .04em; text-align: right; }
 .tarjeta .cliente { font-weight: 600; margin-top: 5px; }
 .tarjeta .maquina, .tarjeta .sintoma, .tarjeta .tecnico { font-size: 13px; color: var(--texto-suave); margin-top: 3px; }
 .tarjeta .sintoma { color: var(--texto); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }

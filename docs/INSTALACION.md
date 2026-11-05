@@ -204,3 +204,17 @@ node scripts/karve-sincronizar.js --simular   solo informa, no escribe
 ```
 
 Reglas: Karve manda en los datos que trae (nombre, NIF, teléfono, email, dirección, alta, baja, comercial y fecha de la última factura); lo que se rellena a mano en la ficha (contactos principales, zona, nº de contrato, características, observaciones, estado reclasificado de una máquina) no se pisa. Los contactos de Karve van a la tabla `cliente_contactos` y se ven en la ficha del cliente; los tres huecos de la ficha se rellenan solos por el cargo del contacto si estaban vacíos. Las máquinas se vinculan al cliente **actual** de Karve y su nº de flota es el código de la máquina en Karve (`0003641` → `3641`); los bastidores repetidos o vacíos solo generan un aviso. Cada ejecución queda registrada en la tabla `sincronizaciones`.
+
+### Importación de las O.T. vivas (Fase 3.6)
+
+Para que el Tablero y los listados tengan las órdenes reales sin cargar las ~96.000 históricas de Karve:
+
+```
+node scripts/karve-importar-ot.js                 vivas + 150 cerradas recientes (código de salida 0 si va bien)
+node scripts/karve-importar-ot.js --simular       solo informa, no escribe
+node scripts/karve-importar-ot.js --cerradas=300  otra cantidad de cerradas recientes (0 = ninguna)
+```
+
+Antes hay que tener sincronizados clientes y máquinas: una O.T. cuyo cliente no esté en la base local se omite (queda en el informe). "Viva" = sin fecha de cierre en Karve. El estado de Karve se traduce a la fase del Tablero: HACER, MTO, INSPECCION, GARANTIA… → Asignada; RECAMBIOS, ALMACEN, PROVEEDOR, RE. PEDIDO… → Pendiente de repuesto; PPTO, PDTE OK PPTO, PDTE. DICTAMEN → Pausada; S.A.T. EXTERNO → En curso; HECHO y PDTE ALBARAN → Finalizada; PDTE Nº PEDIDO → Pendiente de Nº pedido; Vº B FACT. y Vº B F. P. → Visto bueno factura; con fecha de cierre → Cerrada. El estado y el operario de Karve se guardan tal cual en la O.T. (`karve_estado`, `karve_operario`) y se ven en la tarjeta y en el detalle; el técnico local solo se enlaza si existe un usuario con ese código de operario. Los estados "URG." dan prioridad alta y los albaranes de mantenimiento preventivo, tipo preventivo. Se puede repetir cuando haga falta: lo ya importado y no tocado en la aplicación se actualiza con lo que diga Karve; lo modificado aquí se conserva. Cada ejecución queda en `sincronizaciones` con origen `ot-cron`.
+
+El Tablero solo enseña, en la columna de cerradas, las O.T. cerradas en los últimos 7 días (`GET /api/kanban?cerradas=N`, 0 = ninguna, máximo 90); el histórico completo está en el listado con "Mostrar: Todas", paginado.

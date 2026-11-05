@@ -5,14 +5,14 @@ Aplicación web para gestionar las **Órdenes de Trabajo (O.T.)** de reparación
 ## Qué hace
 
 - **Abre y sigue las O.T.**: cada orden tiene su número, el mismo que en Karve (`0000107951`), su cliente, su máquina, su estado y su historial completo de cambios.
-- **Tablero Kanban** para el responsable del taller: las O.T. se ven por fases (abierta, pendiente de repuesto, asignada, en curso, finalizada, pendiente de nº de pedido, visto bueno factura...).
+- **Tablero Kanban** para el responsable del taller: las O.T. se ven por fases (abierta, pendiente de repuesto, asignada, en curso, finalizada, pendiente de nº de pedido, visto bueno factura...). La columna de cerradas solo enseña las de los últimos 7 días; el histórico completo está en el listado, paginado.
 - **Vista para tablet** del técnico: solo ve sus O.T. asignadas, registra tiempos, checklist, fotos y firma del cliente.
 - **Recambios**: el almacén vincula los repuestos usados a cada O.T.
 - **Cierre y facturación**: parte de trabajo, albarán y reclamación automática del nº de pedido al cliente cuando lo exige.
 - **Clientes**: ficha con razón social, NIF/CIF, teléfono, dirección, contacto de compras, contacto técnico (recibe los partes), correo de envío de facturas, fecha de la última factura y comercial responsable; buscador rápido. Un cliente sin factura en los últimos 3 años pasa a "antiguo" y deja de salir en la lista (se puede ver con "Todos").
 - **Máquinas**: ficha con marca, modelo, bastidor, estado (propia, rent to rent, subalquilada o de cliente final), nº de contrato, características técnicas para el mecánico, horas y observaciones. El nº de flota es el código de la máquina en Karve; a una máquina creada a mano se le asigna el siguiente número. Tras el alta solo se cambian las horas y las observaciones; un administrativo puede corregir el resto. Desde la ficha del cliente se ven y se dan de alta sus máquinas. No se borran: se desactivan.
 - **Usuarios**: el administrador da de alta al personal (técnicos internos, SAT externos y oficina) con su usuario, rol y contraseña, y puede cambiarla o desactivar a quien se marcha sin perder su historial. Cada técnico lleva su código de operario en Karve para imputar horas más adelante.
-- **Integración con Karve** (el ERP): la aplicación lee de Karve, en solo lectura, los clientes con sus contactos, las máquinas, el comercial de cada cliente y la fecha de su última factura, con el botón "Sincronizar Karve" o cada noche de forma automática. Más adelante llegarán inventario, albaranes y numeración.
+- **Integración con Karve** (el ERP): la aplicación lee de Karve, en solo lectura, los clientes con sus contactos, las máquinas, el comercial de cada cliente y la fecha de su última factura, con el botón "Sincronizar Karve" o cada noche de forma automática. Con un script se traen también las O.T. vivas de Karve (y una muestra de las cerradas recientes) para que el Tablero y los listados tengan las órdenes reales. Más adelante llegarán inventario y albaranes.
 - **Ayuda de IA**: redacta el parte para el cliente a partir de las notas del técnico y sugiere mantenimientos preventivos.
 
 ## Quién la usa
@@ -48,4 +48,4 @@ La base de datos se crea sola en `.cache/datos.db` la primera vez.
 
 ## Estado del proyecto
 
-En desarrollo. **Fase 1 completada** (octubre de 2026): acceso con usuarios y roles, base de datos, API de O.T. y maestros, y la interfaz con Tablero, vista de tablet y listado. **Fase 2 en curso**: rediseño visual hecho y pantallas de Clientes, Máquinas y Usuarios, y cartera de clientes por comercial; sigue la carga inicial de maestros. El plan por fases está en `contexto/PLAN.md` (archivo local, no versionado).
+En desarrollo. **Fases 1 a 3.5 completadas** (octubre y noviembre de 2026): acceso con usuarios y roles, API y Tablero de O.T., pantallas de clientes, máquinas y usuarios, roles del servicio técnico y la lectura de Karve (clientes, contactos, máquinas, numeración de las O.T. y nº de flota). **Fase 3.6 en curso**: importación de las O.T. vivas de Karve y filtro de cerradas en el Tablero; después, el planificador (Fase 4). El plan por fases está en `contexto/PLAN.md` (archivo local, no versionado).

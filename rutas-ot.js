@@ -14,7 +14,7 @@ const { requierePermiso, puede, alcanceDe } = require('./permisos');
 const { ErrorHttp, texto, entero, enumerado, idRuta } = require('./validar');
 
 const TIPOS = ['correctivo', 'preventivo'];
-const ORIGENES = ['manual', 'whatsapp', 'correo', 'auto'];
+const ORIGENES = ['manual', 'whatsapp', 'correo', 'auto', 'karve'];   // karve = importada de Karve (F3.6-01)
 const LIMITE_DEFECTO = 200;
 const LIMITE_MAX = 1000;
 
@@ -126,6 +126,7 @@ function aplicarCambioEstado({ otId, destino, usuario, nota = null, versionEsper
   }
   const r = stmt.cambiarEstado.run(destino, ahora(), otId, actual.version);
   if (r.changes === 0) throw new ErrorHttp(409, 'La O.T. ha sido modificada por otro usuario. Recarga y vuelve a intentarlo.');
+  if (nuevo.es_final) db.prepare('UPDATE ot SET fecha_cierre = ? WHERE id = ?').run(ahora(), otId); // F3.6-02: fecha de cierre para la columna de cerradas recientes
   stmt.historial.run(otId, actual.estado, destino, usuario.id, ahora(), nota);
   return { anterior: actual.estado, nuevo: destino };
 }
@@ -226,34 +227,41 @@ module.exports = function montarRutasOT(app) {
   });
 
   // Kanban: O.T. vivas agrupadas por fase. Pensado para polling: ETag y 304 si nada cambió.
+  // F3.6-02: las fases cerradas solo enseñan las O.T. cerradas en los últimos `cerradas` días (7 por defecto, 0 = ninguna,
+  // máximo 90) para que la columna no acumule miles de tarjetas; el histórico completo está en GET /ot?abiertas=0, paginado.
   r.get('/kanban', requierePermiso('kanban.ver'), (req, res) => {
     const f = filtroAlcance(req);
-    const base = `FROM ot o JOIN estados e ON e.codigo = o.estado JOIN fases fa ON fa.codigo = e.fase WHERE fa.abierta = 1 AND e.activo = 1${f.sql}`;
-    const firma = db.prepare(`SELECT COUNT(*) AS n, COALESCE(SUM(o.version), 0) AS v, COALESCE(MAX(COALESCE(o.actualizado, o.creado)), '') AS m ${base}`).get(...f.params);
-    const etag = `"${crypto.createHash('sha1').update(`${firma.n}|${firma.v}|${firma.m}|${req.usuario.rol}|${req.usuario.id}`).digest('hex').slice(0, 20)}"`;
+    const dias = Math.min(entero(req.query.cerradas, { nombre: 'cerradas', min: 0 }) ?? 7, 90);
+    const vivasOCerradasRecientes = dias > 0 ? `(fa.abierta = 1 OR COALESCE(o.fecha_cierre, o.actualizado, o.creado) >= date('now', 'localtime', ?))` : 'fa.abierta = 1';
+    const pCerradas = dias > 0 ? [`-${dias} days`] : [];
+    const base = `FROM ot o JOIN estados e ON e.codigo = o.estado JOIN fases fa ON fa.codigo = e.fase WHERE ${vivasOCerradasRecientes} AND e.activo = 1${f.sql}`;
+    const firma = db.prepare(`SELECT COUNT(*) AS n, COALESCE(SUM(o.version), 0) AS v, COALESCE(MAX(COALESCE(o.actualizado, o.creado)), '') AS m ${base}`).get(...pCerradas, ...f.params);
+    const etag = `"${crypto.createHash('sha1').update(`${firma.n}|${firma.v}|${firma.m}|${req.usuario.rol}|${req.usuario.id}|${dias}`).digest('hex').slice(0, 20)}"`;
     if (req.headers['if-none-match'] === etag) return res.status(304).end();
 
-    const fases = db.prepare('SELECT codigo, nombre, orden FROM fases WHERE abierta = 1 ORDER BY orden').all();
+    const fases = db.prepare('SELECT codigo, nombre, orden, abierta FROM fases WHERE abierta = 1 OR ? > 0 ORDER BY orden').all(dias);
     const filas = db.prepare(`
       SELECT o.id, o.numero, o.estado, e.nombre AS estado_nombre, e.color AS estado_color, e.fase,
              o.prioridad, o.tipo, o.origen, o.sintoma, o.version, o.creado, o.actualizado,
              o.cliente_id, c.nombre AS cliente_nombre,
              o.maquina_id, m.marca AS maquina_marca, m.modelo AS maquina_modelo, m.num_flota AS maquina_flota,
-             o.tecnico_id, t.nombre AS tecnico_nombre
+             o.tecnico_id, t.nombre AS tecnico_nombre,
+             o.karve_estado, o.karve_operario, o.fecha_cierre
         FROM ot o
         JOIN estados e ON e.codigo = o.estado
         JOIN fases fa ON fa.codigo = e.fase
         JOIN clientes c ON c.id = o.cliente_id
         LEFT JOIN maquinas m ON m.id = o.maquina_id
         LEFT JOIN usuarios t ON t.id = o.tecnico_id
-       WHERE fa.abierta = 1 AND e.activo = 1${f.sql}
-       ORDER BY o.prioridad, COALESCE(o.actualizado, o.creado) DESC, o.id DESC`).all(...f.params);
+       WHERE ${vivasOCerradasRecientes} AND e.activo = 1${f.sql}
+       ORDER BY o.prioridad, COALESCE(o.actualizado, o.creado) DESC, o.id DESC`).all(...pCerradas, ...f.params);
     const porFase = Object.fromEntries(fases.map((fa) => [fa.codigo, []]));
     for (const fila of filas) (porFase[fila.fase] || (porFase[fila.fase] = [])).push(fila);
     res.set('ETag', etag);
     res.json({
       generado: ahora(),
       total: filas.length,
+      dias_cerradas: dias,
       fases: fases.map((fa) => ({ ...fa, ots: porFase[fa.codigo] })),
     });
   });
