@@ -5,7 +5,7 @@ Aplicación web para gestionar las **Órdenes de Trabajo (O.T.)** de reparación
 ## Qué hace
 
 - **Abre y sigue las O.T.**: cada orden tiene su número, el mismo que en Karve (`0000107951`), su cliente, su máquina, su estado y su historial completo de cambios.
-- **Tablero Kanban** para el responsable del taller: las O.T. se ven por fases (abierta, pendiente de repuesto, asignada, en curso, finalizada, pendiente de nº de pedido, visto bueno factura...). La columna de cerradas solo enseña las de los últimos 7 días; el histórico completo está en el listado, paginado.
+- **Tablero** para el taller: cinco verticales (pendiente de planificar, planificada, en curso, pausada, finalizada) y, dentro, etiquetas con el motivo (pendiente de repuesto, presupuesto, pendiente de nº de pedido, SAT externo, Vº B factura…). Las urgentes van arriba, cada rol tiene su vertical resaltada y las cerradas desaparecen del Tablero (quedan en el listado). Cualquier cambio de estado pide motivo y nota antes de confirmarse.
 - **Vista para tablet** del técnico: solo ve sus O.T. asignadas, registra tiempos, checklist, fotos y firma del cliente.
 - **Recambios**: el almacén vincula los repuestos usados a cada O.T.
 - **Cierre y facturación**: parte de trabajo, albarán y reclamación automática del nº de pedido al cliente cuando lo exige.
@@ -22,7 +22,7 @@ Aplicación web para gestionar las **Órdenes de Trabajo (O.T.)** de reparación
 | Administrativo | Ve y edita todo, gestiona usuarios y es el único que corrige los campos bloqueados de una máquina |
 | Responsable de Servicio Técnico | Toda la operativa: Tablero, planificación, asignaciones y maestros (no gestiona usuarios) |
 | Gerencia | Solo lectura de todo |
-| Gestor de SAT externos | Opera y aprueba solo las O.T. de SAT externos (y las que aún no tienen técnico) |
+| Operativo administrativo | Gestiona sus propias O.T. y las de SAT externos (y las que aún no tienen técnico); comunicación con el cliente y el proveedor |
 | Técnico / Operario | Sus O.T. en la tablet |
 | Recambista / Almacén | Entrada de material y repuestos por O.T. |
 | Comercial | Estado de las O.T. de los clientes de su cartera (solo lectura): solo ve esos clientes, sus máquinas y sus O.T., también en el Tablero |
@@ -48,4 +48,4 @@ La base de datos se crea sola en `.cache/datos.db` la primera vez.
 
 ## Estado del proyecto
 
-En desarrollo. **Fases 1 a 3.5 completadas** (octubre y noviembre de 2026): acceso con usuarios y roles, API y Tablero de O.T., pantallas de clientes, máquinas y usuarios, roles del servicio técnico y la lectura de Karve (clientes, contactos, máquinas, numeración de las O.T. y nº de flota). **Fase 3.6 en curso**: importación de las O.T. vivas de Karve y filtro de cerradas en el Tablero; después, el planificador (Fase 4). El plan por fases está en `contexto/PLAN.md` (archivo local, no versionado).
+En desarrollo. **Fases 1 a 3.5 completadas** (octubre y noviembre de 2026): acceso con usuarios y roles, API y Tablero de O.T., pantallas de clientes, máquinas y usuarios, roles del servicio técnico y la lectura de Karve (clientes, contactos, máquinas, numeración de las O.T. y nº de flota). **Fase 3.6 completada** (O.T. vivas de Karve en el Tablero) y **Fase 4 en curso**: Tablero v2 con verticales y etiquetas (hecho) y, a continuación, el Planificador en forma de calendario, el tablero del técnico y el cronómetro. El plan por fases está en `contexto/PLAN.md` (archivo local, no versionado).

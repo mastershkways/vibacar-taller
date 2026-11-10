@@ -31,6 +31,15 @@
     <button class="btn btn-pequeno" data-accion="recargar">Actualizar</button>
     <button class="btn btn-primario" data-accion="nueva" data-permiso="ot.crear">+ Nueva O.T.</button>
   </div>
+  <form class="filtros filtros-tablero" data-ref="filtros" autocomplete="off">
+    <div class="ancho"><label>Buscar</label><input type="search" name="q" placeholder="Nº, cliente, máquina, síntoma, operario"></div>
+    <div><label>Operario</label><select name="tecnico" data-ref="f-tecnico"><option value="">Todos</option></select></div>
+    <div><label>Zona</label><select name="zona" data-ref="f-zona"><option value="">Todas</option></select></div>
+    <div><label>Etiqueta</label><select name="etiqueta" data-ref="f-etiqueta"><option value="">Todas</option></select></div>
+    <div><label>Prioridad</label><select name="prioridad"><option value="">Todas</option><option value="1">Alta</option><option value="2">Media</option><option value="3">Baja</option></select></div>
+    <div><label>Verticales</label><select name="vertical" data-ref="f-vertical"><option value="">Todas</option><option value="mias">Solo las mías</option></select></div>
+    <div class="al-final"><button class="btn btn-pequeno" type="button" data-accion="limpiar-filtros">Limpiar</button></div>
+  </form>
   <div class="kanban" data-ref="columnas"></div>
 </template>
 
@@ -51,7 +60,8 @@
   </div>
   <form class="filtros" data-ref="filtros">
     <div class="ancho"><label>Buscar</label><input type="search" name="q" placeholder="Nº, cliente, síntoma, bastidor, flota"></div>
-    <div><label>Fase</label><select name="fase" data-ref="fase"><option value="">Todas</option></select></div>
+    <div><label>Vertical</label><select name="fase" data-ref="fase"><option value="">Todas</option></select></div>
+    <div><label>Etiqueta</label><select name="etiqueta" data-ref="etiqueta"><option value="">Todas</option></select></div>
     <div><label>Prioridad</label><select name="prioridad"><option value="">Todas</option><option value="1">Alta</option><option value="2">Media</option><option value="3">Baja</option></select></div>
     <div><label>Mostrar</label><select name="abiertas"><option value="1">Abiertas</option><option value="0">Todas</option></select></div>
     <div><button class="btn" type="submit">Filtrar</button></div>
@@ -125,7 +135,7 @@
   <div class="modal-fondo">
     <div class="modal">
       <div class="modal-cabecera">
-        <h2><span data-ref="numero"></span> <span class="chip" data-ref="estado"></span> <span class="chip chip-claro" data-ref="prioridad"></span></h2>
+        <h2><span data-ref="numero"></span> <span class="chip" data-ref="estado"></span> <span class="chip chip-etiqueta oculto" data-ref="etiqueta"></span> <span class="chip chip-claro" data-ref="prioridad"></span></h2>
         <button class="cerrar" type="button" data-accion="cerrar" aria-label="Cerrar">×</button>
       </div>
       <div class="modal-cuerpo">
@@ -137,6 +147,7 @@
             <div><span>Máquina</span><span data-ref="maquina"></span></div>
             <div><span>Técnico asignado</span><span data-ref="tecnico"></span></div>
             <div><span>Abierta</span><span data-ref="creado"></span></div>
+            <div><span>Planificación</span><span data-ref="bloques"></span></div>
             <div data-ref="fila-karve" class="oculto"><span>En Karve</span><span data-ref="karve"></span></div>
           </div>
         </section>
@@ -163,8 +174,12 @@
         <section data-ref="sec-estado">
           <h3>Cambiar estado</h3>
           <div class="estado-botones" data-ref="transiciones"></div>
-          <label>Trabajo realizado / nota del cambio</label>
-          <textarea data-ref="nota-estado" class="amplio" maxlength="1000" placeholder="Describe qué has hecho. Puedes usar el dictado de voz del teclado."></textarea>
+          <div class="pista">Antes de confirmar se piden el motivo (o el técnico) y una nota.</div>
+          <form class="inline separado oculto" data-ref="form-etiqueta">
+            <label class="etiqueta-inline">Etiqueta en esta vertical</label>
+            <select name="etiqueta" data-ref="etiquetas"></select>
+            <button class="btn btn-pequeno" type="submit">Cambiar etiqueta</button>
+          </form>
         </section>
 
         <section data-ref="sec-asignacion">
@@ -392,7 +407,7 @@
     </div>
   </div>
 </template>
-<template id="tpl-parte">
+<template id="tpl-cambio-estado">
   <div class="modal-fondo">
     <div class="modal estrecho">
       <div class="modal-cabecera">
@@ -400,11 +415,18 @@
         <button class="cerrar" type="button" data-accion="cerrar" aria-label="Cerrar">×</button>
       </div>
       <div class="modal-cuerpo">
+        <div class="pista" data-ref="desde"></div>
         <div data-ref="avisos"></div>
-        <label>Trabajo realizado / nota</label>
-        <textarea data-ref="nota" class="amplio dictado" maxlength="1000" placeholder="Dicta o escribe qué has hecho."></textarea>
+        <div class="pregunta" data-ref="pregunta-1">
+          <label data-ref="etiqueta-1"></label>
+          <select data-ref="opcion"></select>
+        </div>
+        <div class="pregunta">
+          <label data-ref="etiqueta-2"></label>
+          <textarea data-ref="nota" class="amplio dictado" maxlength="1000" placeholder="Dicta o escribe."></textarea>
+        </div>
         <div class="acciones">
-          <button class="btn btn-primario btn-grande" type="button" data-accion="confirmar"></button>
+          <button class="btn btn-primario btn-grande" type="button" data-ref="confirmar"></button>
           <button class="btn btn-grande" type="button" data-accion="cerrar">Cancelar</button>
         </div>
       </div>

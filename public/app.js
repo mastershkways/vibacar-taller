@@ -1,9 +1,9 @@
 // app.js — Gestión de Taller Vibacar. Interfaz de una sola página, sin frameworks.
 //
 // Arranque: GET /api/sesion + GET /api/estados → estado global `S` → vista según el rol.
-//   administrativo, responsable_st, gestor_sat, gerencia → Tablero (Kanban) con polling cada 10 s (ETag / 304)
+//   administrativo, responsable_st, operativo, gerencia → Tablero (verticales por estado) con polling cada 10 s (ETag / 304)
 //   tecnico, sat           → Mis O.T. (tablet: tarjetas y botones grandes)
-//   recambista, comercial, comercial_jefe → Listado (tabla); Tablero si el rol tiene kanban.ver
+//   recambista              → Tablero (su vertical es Pausada); comercial, comercial_jefe → Listado (tabla)
 // Las vistas son <template> del index.html que se clonan en <main id="app">.
 // Lo que se pinta depende de los permisos que devuelve el servidor; la barrera real está en la API.
 
@@ -13,18 +13,21 @@ const S = {
   sesion: null,            // { usuario, rol, alcance, permisos }
   permisos: new Set(),
   fases: [],               // todas (abierta=1 y 0)
-  estados: [],
+  estados: [],             // verticales del Tablero (F4-04), con `responsables`
   estadoPor: {},           // codigo → estado
-  transiciones: [],        // [{origen, destino}] ya filtradas por el rol
+  etiquetas: [],           // etiquetas dentro de cada vertical (F4-01)
+  etiquetaPor: {},
+  flujo: { libre: true, destinos_asignadas: [], puede_cerrar: false },
   vista: null,
   kanban: { etag: null, datos: null, timer: null, cargando: false },
+  tablero: { filtros: {} },  // filtros del Tablero (operario, zona, etiqueta, prioridad, texto, "solo mi vertical")
   listado: { pagina: 1, limite: 100 },
   clientes: { pagina: 1, limite: 50 },
   maquinas: { pagina: 1, limite: 50 },
   tecnicos: null,
 };
 
-const DIAS_CERRADAS = 7;     // F3.6-02: la columna de cerradas del Tablero solo enseña las de estos últimos días
+const DIAS_CERRADAS = 0;     // F4-04: las cerradas desaparecen del Tablero (gerencia 2026-11-06); con N > 0 vuelve la columna con las de esos días
 const POLLING_MS = 10000;
 const PRIORIDADES = { 1: 'Alta', 2: 'Media', 3: 'Baja' };
 const app = document.getElementById('app');
@@ -182,10 +185,24 @@ function elegir(titulo, opciones) {
 }
 
 // ---------------------------------------------------------------------------
-// Estados y transiciones (datos de /api/estados)
+// Estados (verticales), etiquetas y flujo libre (datos de /api/estados). F4-04.
 // ---------------------------------------------------------------------------
-function destinosDesde(codigoEstado) {
-  return S.transiciones.filter((t) => t.origen === codigoEstado).map((t) => S.estadoPor[t.destino]).filter(Boolean);
+// Estados a los que este usuario puede llevar la O.T. (misma regla que el servidor: técnico/SAT a un subconjunto; cerrar exige ot.cerrar).
+function destinosDesde(o) {
+  if (!puede('ot.cambiar_estado')) return [];
+  const estado = typeof o === 'string' ? o : o.estado;
+  const esFinal = !!((typeof o === 'object' && o.es_final !== undefined) ? o.es_final : (S.estadoPor[estado] || {}).es_final);
+  if (esFinal && !S.flujo.puede_cerrar) return [];
+  const asignadas = S.sesion.alcance === 'asignadas';
+  return S.estados.filter((e) => e.codigo !== estado && (!asignadas || S.flujo.destinos_asignadas.includes(e.codigo)) && (!e.es_final || S.flujo.puede_cerrar));
+}
+
+function etiquetasDe(estado) { return S.etiquetas.filter((t) => t.estado === estado); }
+
+// Mi rol es responsable de esa vertical ("cada uno limpia su vertical").
+function esMiVertical(codigoEstado) {
+  const e = S.estadoPor[codigoEstado];
+  return !!(e && (e.responsables || []).includes(S.sesion.usuario.rol));
 }
 
 function chipEstado(o) {
@@ -193,20 +210,78 @@ function chipEstado(o) {
   return `<span class="chip" style="background:${esc(e.color || o.estado_color || '#6b7280')}">${esc(e.nombre || o.estado_nombre || o.estado)}</span>`;
 }
 
+function chipEtiqueta(o) {
+  if (!o.etiqueta) return '';
+  const t = S.etiquetaPor[o.etiqueta] || { nombre: o.etiqueta_nombre || o.etiqueta, color: o.etiqueta_color };
+  return `<span class="chip chip-etiqueta" style="background:${esc(t.color || '#6b7280')}">${esc(t.nombre)}</span>`;
+}
+
 function chipPrioridad(p) {
   return `<span class="prio prio-${p}" title="Prioridad ${PRIORIDADES[p] || p}"></span>`;
 }
 
-// Cambio de estado con bloqueo optimista. Devuelve true si se hizo.
-async function cambiarEstado(ot, destino, nota, contenedorAvisos, alRecargar = null) {
-  try {
-    await api(`/api/ot/${ot.id}/estado`, { method: 'POST', body: { estado: destino, nota: nota || undefined, version: ot.version } });
-    toast(`${ot.numero} → ${S.estadoPor[destino]?.nombre || destino}`, 'ok');
-    return true;
-  } catch (e) {
-    mostrarErrorAccion(e, contenedorAvisos, alRecargar);
-    return false;
-  }
+// Modal de cambio de estado (F4-04): dos preguntas según el destino (motivo/etiqueta o técnico, y nota) y confirmación.
+// Devuelve una promesa con true si se hizo el cambio; false si se canceló o falló.
+function abrirCambioEstado(ot, destino, { alTerminar = null, contenedorAvisos = null } = {}) {
+  return new Promise((resolver) => {
+    const d = S.estadoPor[destino] || { nombre: destino };
+    const nodo = tpl('tpl-cambio-estado');
+    ref('titulo', nodo).textContent = `${ot.numero} → ${d.nombre}`;
+    ref('desde', nodo).textContent = `Ahora: ${(S.estadoPor[ot.estado] || {}).nombre || ot.estado}${ot.etiqueta ? ' · ' + ((S.etiquetaPor[ot.etiqueta] || {}).nombre || ot.etiqueta) : ''}`;
+    const p1 = ref('pregunta-1', nodo);
+    const sel = ref('opcion', nodo);
+    const etiquetas = etiquetasDe(destino);
+    let modo = 'ninguna';
+    if (etiquetas.length) {
+      modo = 'etiqueta';
+      ref('etiqueta-1', nodo).textContent = destino === 'cerrada' ? '¿Cómo se cierra?' : destino === 'finalizada' ? '¿En qué situación queda?' : `¿Por qué pasa a ${d.nombre.toLowerCase()}?`;
+      const sinEtiqueta = destino === 'finalizada' ? 'Trabajo terminado, pendiente de revisar' : destino === 'en_curso' ? 'Técnico propio' : '— Elige el motivo —';
+      sel.innerHTML = `<option value="">${esc(sinEtiqueta)}</option>` + etiquetas.map((t) => `<option value="${esc(t.codigo)}">${esc(t.nombre)}</option>`).join('');
+      sel.required = destino === 'pausada' || destino === 'cerrada';
+    } else if (destino === 'planificada' && puede('ot.asignar')) {
+      modo = 'tecnico';
+      ref('etiqueta-1', nodo).textContent = '¿Qué técnico la hace?';
+      sel.innerHTML = '<option value="">— Sin cambiar —</option>';
+      cargarTecnicos().then((ts) => {
+        for (const t of ts) sel.insertAdjacentHTML('beforeend', `<option value="${t.id}">${esc(t.nombre)} (${esc(t.rol)})</option>`);
+        if (ot.tecnico_id) sel.value = String(ot.tecnico_id);
+      }).catch(() => {});
+    } else {
+      p1.classList.add('oculto');
+    }
+    const nota = ref('nota', nodo);
+    const notaObligatoria = destino === 'finalizada' || destino === 'pausada';
+    ref('etiqueta-2', nodo).textContent = destino === 'finalizada' ? 'Trabajo realizado' : destino === 'pausada' ? '¿Qué falta para seguir?' : 'Nota del cambio (opcional)';
+    if (S.sesion.alcance === 'asignadas') nodo.classList.add('tablet');
+    const boton = ref('confirmar', nodo);
+    boton.textContent = `Confirmar: ${d.nombre}`;
+    if (d.color) boton.style.borderColor = d.color;
+    const avisos = ref('avisos', nodo);
+    let hecho = false;
+    boton.onclick = async () => {
+      if (modo === 'etiqueta' && sel.required && !sel.value) { aviso(avisos, 'Elige el motivo', 'error'); sel.focus(); return; }
+      if (notaObligatoria && !nota.value.trim()) { aviso(avisos, 'Escribe la nota', 'error'); nota.focus(); return; }
+      boton.disabled = true;
+      const body = { estado: destino, nota: nota.value.trim() || undefined, version: ot.version };
+      if (modo === 'etiqueta') body.etiqueta = sel.value || null;
+      if (modo === 'tecnico' && sel.value) body.tecnico_id = Number(sel.value);
+      try {
+        await api(`/api/ot/${ot.id}/estado`, { method: 'POST', body });
+        toast(`${ot.numero} → ${d.nombre}`, 'ok');
+        hecho = true;
+        cerrarModal(nodo);
+        if (alTerminar) alTerminar();
+        resolver(true);
+      } catch (e) {
+        boton.disabled = false;
+        mostrarErrorAccion(e, avisos);
+        if (e.status === 409 || e.status === 403) { hecho = true; cerrarModal(nodo); if (contenedorAvisos) mostrarErrorAccion(e, contenedorAvisos); resolver(false); }
+      }
+    };
+    abrirModal(nodo);
+    const obs = new MutationObserver(() => { if (!nodo.isConnected) { obs.disconnect(); if (!hecho) resolver(false); } });
+    obs.observe(document.getElementById('modales'), { childList: true });
+  });
 }
 
 function mostrarErrorAccion(e, contenedorAvisos, alRecargar = null) {
@@ -240,7 +315,8 @@ const VISTAS = {
 
 function vistaPorDefecto() {
   if (S.sesion.alcance === 'asignadas') return 'misot';
-  if (['administrativo', 'responsable_st', 'gestor_sat', 'gerencia'].includes(S.sesion.usuario.rol) && puede('kanban.ver')) return 'kanban';
+  // F4-04: home por rol. Oficina y recambista entran en el Tablero (cada uno con su vertical resaltada); comerciales, en el Listado.
+  if (['administrativo', 'responsable_st', 'operativo', 'gerencia', 'recambista'].includes(S.sesion.usuario.rol) && puede('kanban.ver')) return 'kanban';
   return 'listado';
 }
 
@@ -367,7 +443,9 @@ async function iniciar() {
     S.fases = estados.fases;
     S.estados = estados.estados;
     S.estadoPor = Object.fromEntries(estados.estados.map((e) => [e.codigo, e]));
-    S.transiciones = estados.transiciones;
+    S.etiquetas = estados.etiquetas || [];
+    S.etiquetaPor = Object.fromEntries(S.etiquetas.map((t) => [t.codigo, t]));
+    S.flujo = estados.flujo || S.flujo;
   } catch (e) {
     if (e.status !== 401) app.innerHTML = `<div class="vacio">No se ha podido cargar la aplicación: ${esc(e.message)}</div>`;
     return;
@@ -396,14 +474,40 @@ function pararPolling() {
 
 function pintarKanban() {
   $('[data-accion="recargar"]', app).onclick = () => { S.kanban.etag = null; cargarKanban(); };
+  // Filtros (se aplican en el navegador sobre los datos del polling): operario, zona, etiqueta, prioridad, texto y "solo mi vertical".
+  const form = ref('filtros', app);
+  const selEt = ref('f-etiqueta', form);
+  for (const e of S.estados) {
+    const lista = etiquetasDe(e.codigo);
+    if (!lista.length) continue;
+    const grupo = document.createElement('optgroup');
+    grupo.label = e.nombre;
+    for (const t of lista) grupo.insertAdjacentHTML('beforeend', `<option value="${esc(t.codigo)}">${esc(t.nombre)}</option>`);
+    selEt.append(grupo);
+  }
+  selEt.insertAdjacentHTML('beforeend', '<option value="-">Sin etiqueta</option>');
+  const selTec = ref('f-tecnico', form);
+  selTec.insertAdjacentHTML('beforeend', '<option value="-">Sin técnico</option>');
+  cargarTecnicos().then((ts) => { for (const t of ts) selTec.insertAdjacentHTML('beforeend', `<option value="${t.id}">${esc(t.nombre)}</option>`); if (S.tablero.filtros.tecnico) selTec.value = S.tablero.filtros.tecnico; }).catch(() => {});
+  if (!S.estados.some((e) => esMiVertical(e.codigo))) ref('f-vertical', form).closest('div').classList.add('oculto');
+  for (const [k, v] of Object.entries(S.tablero.filtros)) if (form.elements[k]) form.elements[k].value = v;
+  const aplicar = () => { S.tablero.filtros = Object.fromEntries(new FormData(form)); pintarColumnas(); };
+  let temporizador = null;
+  form.oninput = (e) => { if (e.target.name === 'q') { clearTimeout(temporizador); temporizador = setTimeout(aplicar, 200); } else aplicar(); };
+  form.onsubmit = (e) => { e.preventDefault(); aplicar(); };
+  $('[data-accion="limpiar-filtros"]', form).onclick = () => { form.reset(); aplicar(); };
+
   const cont = ref('columnas', app);
   cont.innerHTML = '';
   for (const f of S.fases) {
+    if (!f.abierta && !DIAS_CERRADAS) continue; // F4-04: las cerradas no se muestran
     const col = document.createElement('div');
     col.className = 'columna';
     col.dataset.fase = f.codigo;
-    if (!f.abierta) col.classList.add('cerradas'); // F3.6-02: solo las cerradas en los últimos días; el histórico está en el Listado
-    col.innerHTML = `<h3>${esc(f.nombre)} <span data-ref="n">0</span>${f.abierta ? '' : `<small>últimos ${DIAS_CERRADAS} días</small>`}</h3><div class="cuerpo" data-ref="cuerpo"></div>`;
+    if (!f.abierta) col.classList.add('cerradas');
+    const mia = esMiVertical(f.codigo);
+    if (mia) col.classList.add('mia');
+    col.innerHTML = `<h3><span class="titulo-col">${esc(f.nombre)}${mia ? ' <small class="mia-marca" title="Tu rol es responsable de esta vertical">tu vertical</small>' : ''}</span><span data-ref="n">0</span>${f.abierta ? '' : `<small>últimos ${DIAS_CERRADAS} días</small>`}</h3><div class="cuerpo" data-ref="cuerpo"></div>`;
     prepararSoltar(col);
     cont.append(col);
   }
@@ -428,37 +532,66 @@ async function cargarKanban() {
   }
 }
 
+function pasaFiltros(o) {
+  const f = S.tablero.filtros;
+  if (f.q) {
+    const txt = `${o.numero} ${o.cliente_nombre} ${textoMaquina(o)} ${o.sintoma || ''} ${nombreTecnico(o)} ${o.karve_estado || ''}`.toLowerCase();
+    if (!txt.includes(f.q.toLowerCase())) return false;
+  }
+  if (f.tecnico && (f.tecnico === '-' ? o.tecnico_id : String(o.tecnico_id) !== f.tecnico)) return false;
+  if (f.zona && (o.cliente_zona || '') !== f.zona) return false;
+  if (f.etiqueta && (f.etiqueta === '-' ? o.etiqueta : o.etiqueta !== f.etiqueta)) return false;
+  if (f.prioridad && String(o.prioridad) !== f.prioridad) return false;
+  return true;
+}
+
 function pintarColumnas() {
   const datos = S.kanban.datos;
   if (!datos || S.vista !== 'kanban') return;
-  const cont = ref('contador', app);
-  if (cont) {
-    const cerradas = datos.fases.filter((f) => !f.abierta).reduce((n, f) => n + f.ots.length, 0);
-    cont.textContent = `${datos.total - cerradas} O.T. abiertas${cerradas ? ` · ${cerradas} cerradas en ${datos.dias_cerradas} días` : ''} · ${fecha(datos.generado)}`;
+  const f = S.tablero.filtros;
+  const selZona = ref('f-zona', app);
+  if (selZona && selZona.options.length <= 1) {
+    const zonas = [...new Set(datos.fases.flatMap((fa) => fa.ots.map((o) => o.cliente_zona)).filter(Boolean))].sort((x, y) => x.localeCompare(y, 'es'));
+    for (const z of zonas) selZona.insertAdjacentHTML('beforeend', `<option value="${esc(z)}">${esc(z)}</option>`);
+    if (f.zona) selZona.value = f.zona;
   }
-  for (const f of datos.fases) {
-    const col = $(`.columna[data-fase="${f.codigo}"]`, app);
+  const soloMias = f.vertical === 'mias';
+  const cerradas = datos.fases.filter((fa) => !fa.abierta).reduce((n, fa) => n + fa.ots.length, 0);
+  let visibles = 0, urgentes = 0;
+  for (const fa of datos.fases) {
+    const col = $(`.columna[data-fase="${fa.codigo}"]`, app);
     if (!col) continue;
-    ref('n', col).textContent = f.ots.length;
+    const ocultar = soloMias && !esMiVertical(fa.codigo);
+    col.classList.toggle('oculto', ocultar);
+    const lista = fa.ots.filter(pasaFiltros);
+    ref('n', col).textContent = lista.length === fa.ots.length ? String(fa.ots.length) : `${lista.length}/${fa.ots.length}`;
     const cuerpo = ref('cuerpo', col);
     cuerpo.innerHTML = '';
-    for (const o of f.ots) cuerpo.append(tarjetaKanban(o));
+    for (const o of lista) cuerpo.append(tarjetaKanban(o));
+    if (!ocultar) { visibles += lista.length; urgentes += lista.filter((o) => o.prioridad === 1).length; }
+  }
+  const cont = ref('contador', app);
+  if (cont) {
+    const abiertas = datos.total - cerradas;
+    cont.textContent = `${abiertas} O.T. abiertas${visibles !== abiertas ? ` · ${visibles} en pantalla` : ''}${urgentes ? ` · ${urgentes} urgentes` : ''}${cerradas ? ` · ${cerradas} cerradas en ${datos.dias_cerradas} días` : ''} · ${fecha(datos.generado)}`;
   }
 }
 
 function tarjetaKanban(o) {
   const el = document.createElement('div');
-  el.className = 'tarjeta';
+  el.className = `tarjeta${o.prioridad === 1 ? ' urgente' : ''}`;
   el.dataset.id = o.id;
   el.style.borderLeftColor = (S.estadoPor[o.estado] || {}).color || '#6b7280';
   el.innerHTML = `
-    <div class="num">${chipPrioridad(o.prioridad)}${esc(o.numero)} <small>${esc(o.tipo)}${o.karve_estado ? ' · ' + esc(o.karve_estado) : ''}</small></div>
-    <div class="cliente">${esc(o.cliente_nombre)}</div>
+    <div class="num">${chipPrioridad(o.prioridad)}${esc(o.numero)} <small>${o.prioridad === 1 ? '<span class="urgente-texto">Urgente</span> · ' : ''}${esc(o.tipo)}${o.karve_estado ? ' · ' + esc(o.karve_estado) : ''}</small></div>
+    <div class="cliente">${esc(o.cliente_nombre)}${o.cliente_zona ? ` <small class="zona">${esc(o.cliente_zona)}</small>` : ''}</div>
     ${o.maquina_id ? `<div class="maquina">${esc(textoMaquina(o))}</div>` : ''}
     ${o.sintoma ? `<div class="sintoma" title="${esc(o.sintoma)}">${esc(o.sintoma)}</div>` : ''}
-    ${nombreTecnico(o) ? `<div class="tecnico">${esc(nombreTecnico(o))}</div>` : ''}`;
+    ${o.etiqueta ? `<div class="etiquetas">${chipEtiqueta(o)}</div>` : ''}
+    ${nombreTecnico(o) ? `<div class="tecnico">${esc(nombreTecnico(o))}</div>` : ''}
+    ${o.fecha_prevista ? `<div class="prevista">Prevista ${esc(fecha(o.fecha_prevista))}</div>` : ''}`;
   el.onclick = () => abrirDetalle(o.id);
-  if (puede('ot.cambiar_estado') && destinosDesde(o.estado).length) {
+  if (destinosDesde(o).length) {
     el.draggable = true;
     el.addEventListener('dragstart', (e) => {
       e.dataTransfer.setData('text/plain', String(o.id));
@@ -478,7 +611,7 @@ function otDelKanban(id) {
 }
 
 function marcarColumnasDestino(o) {
-  const destinos = destinosDesde(o.estado);
+  const destinos = destinosDesde(o);
   for (const col of $$('.columna', app)) {
     if (col.dataset.fase === o.fase) continue;
     col.classList.add(destinos.some((d) => d.fase === col.dataset.fase) ? 'destino-ok' : 'destino-no');
@@ -489,6 +622,7 @@ function desmarcarColumnas() {
   for (const col of $$('.columna', app)) col.classList.remove('destino-ok', 'destino-no');
 }
 
+// Soltar una tarjeta en otra vertical abre el modal de dos preguntas; la tarjeta solo se mueve si el servidor confirma.
 function prepararSoltar(col) {
   col.addEventListener('dragover', (e) => {
     if (col.classList.contains('destino-ok')) { e.preventDefault(); e.dataTransfer.dropEffect = 'move'; }
@@ -501,19 +635,11 @@ function prepararSoltar(col) {
     if (!o) return;
     const fase = col.dataset.fase;
     if (fase === o.fase) return;
-    const candidatos = destinosDesde(o.estado).filter((d) => d.fase === fase);
-    if (!candidatos.length) { toast('Tu rol no puede mover esta O.T. a esa fase', 'error'); return; }
-    let destino = candidatos[0].codigo;
-    if (candidatos.length > 1) {
-      destino = await elegir(`${o.numero}: ¿a qué estado?`, candidatos.map((d) => ({ etiqueta: d.nombre, valor: d.codigo, color: d.color })));
-      if (!destino) return;
-    }
-    // Movimiento optimista: la tarjeta cambia de columna; si el servidor dice que no, se repinta tal como estaba.
-    const tarjeta = $(`.tarjeta[data-id="${id}"]`, app);
-    if (tarjeta) ref('cuerpo', col).prepend(tarjeta);
-    const ok = await cambiarEstado(o, destino, null, null);
+    const candidatos = destinosDesde(o).filter((d) => d.fase === fase);
+    if (!candidatos.length) { toast('Tu rol no puede mover esta O.T. a esa vertical', 'error'); return; }
+    const ok = await abrirCambioEstado(o, candidatos[0].codigo);
     S.kanban.etag = null;
-    if (!ok) pintarColumnas();
+    if (ok) { const tarjeta = $(`.tarjeta[data-id="${id}"]`, app); if (tarjeta) ref('cuerpo', col).prepend(tarjeta); }
     cargarKanban();
   });
 }
@@ -542,9 +668,9 @@ function tarjetaGrande(o) {
   const el = document.createElement('div');
   el.className = 'tarjeta-grande';
   el.style.borderTopColor = (S.estadoPor[o.estado] || {}).color || '#6b7280';
-  const destinos = puede('ot.cambiar_estado') ? destinosDesde(o.estado) : [];
+  const destinos = destinosDesde(o);
   el.innerHTML = `
-    <div class="num"><span>${chipPrioridad(o.prioridad)}${esc(o.numero)}</span>${chipEstado(o)}</div>
+    <div class="num"><span>${chipPrioridad(o.prioridad)}${esc(o.numero)}</span><span>${chipEstado(o)} ${chipEtiqueta(o)}</span></div>
     <div class="cliente">${esc(o.cliente_nombre)}</div>
     ${o.maquina_id ? `<div class="maquina">${esc(textoMaquina(o))}</div>` : ''}
     ${o.sintoma ? `<div class="sintoma">${esc(o.sintoma)}</div>` : ''}
@@ -554,26 +680,9 @@ function tarjetaGrande(o) {
     </div>`;
   $('[data-accion="detalle"]', el).onclick = () => abrirDetalle(o.id);
   for (const b of $$('[data-destino]', el)) {
-    b.onclick = () => abrirParte(o, b.dataset.destino, pintarMisOT);
+    b.onclick = () => abrirCambioEstado(o, b.dataset.destino, { alTerminar: pintarMisOT });
   }
   return el;
-}
-
-// Modal "parte": nota grande (dictado) + confirmar el cambio de estado.
-function abrirParte(o, destino, alTerminar) {
-  const nodo = tpl('tpl-parte');
-  const d = S.estadoPor[destino] || { nombre: destino };
-  ref('titulo', nodo).textContent = `${o.numero}: pasar a "${d.nombre}"`;
-  const boton = $('[data-accion="confirmar"]', nodo);
-  boton.textContent = d.nombre;
-  boton.onclick = async () => {
-    boton.disabled = true;
-    const ok = await cambiarEstado(o, destino, ref('nota', nodo).value.trim(), ref('avisos', nodo));
-    boton.disabled = false;
-    if (ok) { cerrarModal(nodo); alTerminar && alTerminar(); }
-  };
-  abrirModal(nodo);
-  ref('nota', nodo).focus();
 }
 
 // ---------------------------------------------------------------------------
@@ -583,6 +692,9 @@ function pintarListado() {
   const form = ref('filtros', app);
   const selFase = ref('fase', form);
   for (const f of S.fases) selFase.insertAdjacentHTML('beforeend', `<option value="${esc(f.codigo)}">${esc(f.nombre)}</option>`);
+  const selEt = ref('etiqueta', form);
+  for (const t of S.etiquetas) selEt.insertAdjacentHTML('beforeend', `<option value="${esc(t.codigo)}">${esc(t.nombre)}</option>`);
+  selEt.insertAdjacentHTML('beforeend', '<option value="-">Sin etiqueta</option>');
   form.onsubmit = (e) => { e.preventDefault(); S.listado.pagina = 1; cargarListado(); };
   for (const sel of $$('select', form)) sel.onchange = () => { S.listado.pagina = 1; cargarListado(); };
   cargarListado();
@@ -608,7 +720,7 @@ async function cargarListado() {
         <td>${esc(o.cliente_nombre)}</td>
         <td>${esc(textoMaquina(o))}</td>
         <td>${esc(o.sintoma || '')}</td>
-        <td>${chipEstado(o)}</td>
+        <td>${chipEstado(o)} ${chipEtiqueta(o)}</td>
         <td>${chipPrioridad(o.prioridad)}${esc(PRIORIDADES[o.prioridad] || '')}</td>
         <td>${esc(nombreTecnico(o))}</td>
         <td>${esc(fecha(o.creado))}</td>`;
@@ -1213,7 +1325,14 @@ function pintarDetalle(nodo, ot) {
   const chip = ref('estado', nodo);
   chip.textContent = ot.estado_nombre;
   chip.style.background = ot.estado_color || '#6b7280';
+  const chipEt = ref('etiqueta', nodo);
+  chipEt.classList.toggle('oculto', !ot.etiqueta);
+  if (ot.etiqueta) { chipEt.textContent = ot.etiqueta_nombre || ot.etiqueta; chipEt.style.background = ot.etiqueta_color || '#6b7280'; }
   ref('prioridad', nodo).textContent = `Prioridad ${PRIORIDADES[ot.prioridad] || ot.prioridad}`;
+  // F4-01: bloques de planificación (los crea el Planificador, F4-02).
+  ref('bloques', nodo).textContent = ot.bloques && ot.bloques.length
+    ? ot.bloques.map((b) => `${fecha(b.dia)} ${b.hora_inicio} · ${b.tecnico_nombre} · ${b.duracion_min} min`).join(' | ')
+    : (ot.fecha_prevista ? `Sin bloques · prevista ${fecha(ot.fecha_prevista)}` : 'Sin planificar');
   ref('cliente', nodo).textContent = ot.cliente_nombre + (ot.exige_pedido ? ' · exige Nº pedido' : '');
   ref('maquina', nodo).textContent = textoMaquina(ot) || '—';
   ref('tecnico', nodo).textContent = ot.tecnico_nombre || (ot.karve_operario ? `${ot.karve_operario} (operario en Karve, sin usuario en la app)` : 'Sin asignar');
@@ -1259,27 +1378,40 @@ function pintarDetalle(nodo, ot) {
     }
   };
 
-  // Cambio de estado: botones de las transiciones que el servidor permite a este rol.
+  // Cambio de estado (F4-04): un botón por vertical de destino → modal de dos preguntas; y la etiqueta dentro de la vertical actual.
   const secEstado = ref('sec-estado', nodo);
   const cont = ref('transiciones', nodo);
   cont.innerHTML = '';
-  const nota = ref('nota-estado', nodo);
-  if (ot.transiciones && ot.transiciones.length && !ot.es_final) {
+  const destinos = ot.destinos || [];
+  const formEt = ref('form-etiqueta', nodo);
+  const etiquetasAqui = etiquetasDe(ot.estado);
+  const puedeEtiquetar = puede('ot.cambiar_estado') && !ot.es_final && etiquetasAqui.length > 0;
+  if (destinos.length || puedeEtiquetar) {
     secEstado.classList.remove('oculto');
-    for (const t of ot.transiciones) {
+    for (const t of destinos) {
       const b = document.createElement('button');
       b.type = 'button';
       b.className = 'btn';
       b.style.borderColor = t.color || '#6b7280';
       b.textContent = `→ ${t.nombre}`;
-      b.onclick = async () => {
-        b.disabled = true;
-        aviso(avisos, null);
-        const ok = await cambiarEstado(ot, t.codigo, nota.value.trim(), avisos, () => recargarDetalle(nodo, ot.id));
-        b.disabled = false;
-        if (ok) { await recargarDetalle(nodo, ot.id); refrescarVista(); }
-      };
+      b.onclick = () => abrirCambioEstado(ot, t.codigo, { contenedorAvisos: avisos, alTerminar: async () => { await recargarDetalle(nodo, ot.id); refrescarVista(); } });
       cont.append(b);
+    }
+    formEt.classList.toggle('oculto', !puedeEtiquetar);
+    if (puedeEtiquetar) {
+      const sel = ref('etiquetas', formEt);
+      sel.innerHTML = '<option value="">— Sin etiqueta —</option>' + etiquetasAqui.map((t) => `<option value="${esc(t.codigo)}">${esc(t.nombre)}</option>`).join('');
+      sel.value = ot.etiqueta || '';
+      formEt.onsubmit = async (e) => {
+        e.preventDefault();
+        aviso(avisos, null);
+        try {
+          await api(`/api/ot/${ot.id}`, { method: 'PUT', body: { version: ot.version, etiqueta: sel.value || null } });
+          toast('Etiqueta cambiada', 'ok');
+          await recargarDetalle(nodo, ot.id);
+          refrescarVista();
+        } catch (err) { mostrarErrorAccion(err, avisos, () => recargarDetalle(nodo, ot.id)); }
+      };
     }
   } else {
     secEstado.classList.add('oculto');

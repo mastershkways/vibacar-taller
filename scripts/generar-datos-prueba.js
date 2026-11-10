@@ -1,6 +1,6 @@
 // scripts/generar-datos-prueba.js — Datos ficticios para desarrollo y pruebas, o purga para el entorno real.
 //
-//   node scripts/generar-datos-prueba.js            crea usuarios de prueba, 12 clientes, máquinas y 20 O.T. repartidas por el Kanban
+//   node scripts/generar-datos-prueba.js            crea usuarios de prueba, 12 clientes, máquinas y 20 O.T. repartidas por las verticales del Tablero (con etiquetas)
 //   node scripts/generar-datos-prueba.js --anadir   añade otra tanda aunque ya haya datos (los clientes repetidos se reutilizan)
 //   node scripts/generar-datos-prueba.js --limpiar  PURGA para el entorno real (2026-11-04): vacía toda la base (O.T., máquinas,
 //                                                  clientes, contactos, sincronizaciones, sesiones, usuarios y contadores) y deja solo
@@ -65,7 +65,7 @@ const USUARIOS = [
   ['finanzas1',  'Leire Mendizabal',  'administrativo', 'leire@vibacar-pruebas.local', null, 1], // F3-05: antes financiero
   ['responsable1', 'Aitor Zelaia',    'responsable_st', 'aitor@vibacar-pruebas.local', null, 1], // F3-05
   ['gerencia1',  'Amaia Olaizola',    'gerencia',   'amaia@vibacar-pruebas.local', null,    1], // F3-05: solo lectura
-  ['gestorsat1', 'Oihane Zabala',     'gestor_sat', 'oihane@vibacar-pruebas.local', null,   1], // F3-05: O.T. de SAT
+  ['operativo1', 'Oihane Zabala',     'operativo',  'oihane@vibacar-pruebas.local', null,   1], // F4-12: sus O.T. + las de SAT (antes gestor_sat)
   ['comercial1', 'Iker Goikoetxea',   'comercial',  'iker@vibacar-pruebas.local',  null,    1],
   ['jefeventas1','Nerea Olabarria',    'comercial_jefe', 'nerea@vibacar-pruebas.local', null, 1], // F2-05: ve la cartera de todos
 ];
@@ -138,53 +138,45 @@ const OBSERVACIONES = {
 };
 const MAQUINAS_INACTIVAS = new Set(['KBCZ0801234567']);
 
-// O.T.: [cliente, maquina (índice dentro del cliente o null), estado final, prioridad, tipo, origen, sintoma, descripcion, notas_internas, técnico (0/1 = tecnico1/2, 2 = sat1, null), días de antigüedad, extras]
+// O.T.: [cliente, maquina (índice dentro del cliente o null), estado final ('vertical' o 'vertical:etiqueta', F4-04), prioridad, tipo, origen, sintoma, descripcion, notas_internas, técnico (0/1 = tecnico1/2, 2 = sat1, null), días de antigüedad, extras]
 // extras: { via: estados intermedios no estándar } | { propuesta: true } (propuesta de técnico pendiente de aprobar)
 const OTS = [
-  [0, 0, 'abierta',              1, 'correctivo', 'whatsapp', 'No arranca en frío',                              'El cliente dice que por las mañanas hay que darle tres o cuatro veces al contacto. Luego funciona bien.', 'Posible batería o precalentadores. Llevar comprobador.', null, 0],
-  [2, 1, 'abierta',              2, 'correctivo', 'correo',   'Pierde aceite hidráulico por el brazo',           'Mancha de aceite bajo la máquina tras la jornada. Nivel baja un dedo cada dos días.', null, null, 1],
-  [8, 0, 'abierta',              3, 'preventivo', 'manual',   'Revisión 500 h',                                  'Toca la revisión de las 500 h según el plan del fabricante.', null, null, 1],
-  [1, 0, 'pendiente_repuesto',   2, 'correctivo', 'manual',   'Cadena destensada lado derecho',                  'El tensor no recupera. Hay que cambiar el cilindro tensor.', 'Pedido a Finanzauto, ref. 9W-7390. Plazo 5 días.', null, 4],
-  [4, 1, 'pendiente_repuesto',   1, 'correctivo', 'whatsapp', 'Fuga de refrigerante por el radiador',            'Se vacía el vaso de expansión en media jornada. Radiador picado por una piedra.', null, 0, 6, { via: ['pendiente_asignacion', 'asignada', 'en_curso'] }],
-  [3, 0, 'pendiente_asignacion', 1, 'correctivo', 'correo',   'Mando de la cesta no responde',                   'Los mandos superiores no hacen nada; desde abajo sí funciona. Grúa parada en obra.', 'Cliente prioritario: tiene una obra parada en Barakaldo.', null, 2, { propuesta: true }],
-  [5, 0, 'pendiente_asignacion', 2, 'correctivo', 'manual',   'Luces de trabajo fundidas y bocina sin sonido',   null, null, null, 2],
-  [9, 0, 'pendiente_asignacion', 2, 'preventivo', 'correo',   'Cambio de filtros y aceite 1000 h',               'Mantenimiento programado. El cliente pide hacerlo en fin de semana.', null, null, 3],
-  [6, 0, 'asignada',             2, 'correctivo', 'manual',   'Freno de estacionamiento no retiene',             'En pendiente la máquina se desplaza con el freno puesto.', null, 0, 3],
-  [7, 1, 'asignada',             1, 'correctivo', 'whatsapp', 'Error E-47 en pantalla y pérdida de potencia',    'Salta el error al cabo de una hora de trabajo. Baja de vueltas y se queda en modo limitado.', 'Mirar boletín de Komatsu sobre el sensor de presión de rail.', 1, 2],
-  [1, 2, 'asignada',             3, 'preventivo', 'manual',   'Revisión anual del rodillo',                      null, null, 2, 5],
-  [0, 1, 'en_curso',             2, 'correctivo', 'manual',   'Ruido en el giro de la torreta',                  'Chirrido metálico al girar a la izquierda. Empeora con la máquina caliente.', null, 0, 7],
-  [4, 0, 'en_curso',             1, 'correctivo', 'correo',   'Vibración excesiva en la pluma',                  'Golpeteo en los bulones del balancín. Holgura visible.', 'Comprobar casquillos; probablemente hay que mecanizar.', 1, 8],
-  [9, 1, 'en_curso',             2, 'correctivo', 'whatsapp', 'No eleva con carga',                              'Con el contenedor vacío sube; con carga se queda a mitad.', null, 2, 4],
-  [2, 0, 'pausada',              2, 'correctivo', 'manual',   'Dirección dura y ruido en la bomba',              'Pausada: esperando autorización del cliente para abrir la bomba.', null, 1, 10],
-  [7, 0, 'finalizada',           2, 'correctivo', 'correo',   'Fallo intermitente del alternador',               'Testigo de batería que parpadea. Carga irregular.', null, 0, 12],
-  [1, 1, 'pendiente_pedido',     2, 'preventivo', 'manual',   'Revisión 2000 h y cambio de neumáticos',          null, 'Ibaizabal exige nº de pedido: reclamar a compras.', 1, 15],
-  [5, 1, 'vb_factura',           3, 'correctivo', 'manual',   'Cristal de la cabina roto',                       'Cristal lateral derecho roto por una piedra.', null, 2, 18],
-  [10, 0, 'cerrada',             2, 'correctivo', 'manual',   'Reparación del motor de traslación',              'Cerrada antes de la baja del cliente.', null, 0, 40],
-  [3, 1, 'cerrada',              3, 'preventivo', 'correo',   'Revisión 250 h',                                  null, null, 1, 30],
+  [0, 0, 'pendiente_planificar',  1, 'correctivo', 'whatsapp', 'No arranca en frío',                              'El cliente dice que por las mañanas hay que darle tres o cuatro veces al contacto. Luego funciona bien.', 'Posible batería o precalentadores. Llevar comprobador.', null, 0],
+  [2, 1, 'pendiente_planificar',  2, 'correctivo', 'correo',   'Pierde aceite hidráulico por el brazo',           'Mancha de aceite bajo la máquina tras la jornada. Nivel baja un dedo cada dos días.', null, null, 1],
+  [8, 0, 'pendiente_planificar',  3, 'preventivo', 'manual',   'Revisión 500 h',                                  'Toca la revisión de las 500 h según el plan del fabricante.', null, null, 1],
+  [1, 0, 'pausada:repuesto',      2, 'correctivo', 'manual',   'Cadena destensada lado derecho',                  'El tensor no recupera. Hay que cambiar el cilindro tensor.', 'Pedido a Finanzauto, ref. 9W-7390. Plazo 5 días.', null, 4, { via: [] }],
+  [4, 1, 'pausada:repuesto',      1, 'correctivo', 'whatsapp', 'Fuga de refrigerante por el radiador',            'Se vacía el vaso de expansión en media jornada. Radiador picado por una piedra.', null, 0, 6, { via: ['planificada', 'en_curso'] }],
+  [3, 0, 'pendiente_planificar',  1, 'correctivo', 'correo',   'Mando de la cesta no responde',                   'Los mandos superiores no hacen nada; desde abajo sí funciona. Grúa parada en obra.', 'Cliente prioritario: tiene una obra parada en Barakaldo.', null, 2, { propuesta: true }],
+  [5, 0, 'pendiente_planificar',  2, 'correctivo', 'manual',   'Luces de trabajo fundidas y bocina sin sonido',   null, null, null, 2],
+  [9, 0, 'pendiente_planificar',  2, 'preventivo', 'correo',   'Cambio de filtros y aceite 1000 h',               'Mantenimiento programado. El cliente pide hacerlo en fin de semana.', null, null, 3],
+  [6, 0, 'planificada',           2, 'correctivo', 'manual',   'Freno de estacionamiento no retiene',             'En pendiente la máquina se desplaza con el freno puesto.', null, 0, 3],
+  [7, 1, 'planificada',           1, 'correctivo', 'whatsapp', 'Error E-47 en pantalla y pérdida de potencia',    'Salta el error al cabo de una hora de trabajo. Baja de vueltas y se queda en modo limitado.', 'Mirar boletín de Komatsu sobre el sensor de presión de rail.', 1, 2],
+  [1, 2, 'planificada',           3, 'preventivo', 'manual',   'Revisión anual del rodillo',                      null, null, 2, 5],
+  [0, 1, 'en_curso',              2, 'correctivo', 'manual',   'Ruido en el giro de la torreta',                  'Chirrido metálico al girar a la izquierda. Empeora con la máquina caliente.', null, 0, 7],
+  [4, 0, 'en_curso',              1, 'correctivo', 'correo',   'Vibración excesiva en la pluma',                  'Golpeteo en los bulones del balancín. Holgura visible.', 'Comprobar casquillos; probablemente hay que mecanizar.', 1, 8],
+  [9, 1, 'en_curso:sat_externo',  2, 'correctivo', 'whatsapp', 'No eleva con carga',                              'Con el contenedor vacío sube; con carga se queda a mitad.', null, 2, 4],
+  [2, 0, 'pausada:presupuesto',   2, 'correctivo', 'manual',   'Dirección dura y ruido en la bomba',              'Pausada: esperando autorización del cliente para abrir la bomba.', null, 1, 10],
+  [7, 0, 'finalizada',            2, 'correctivo', 'correo',   'Fallo intermitente del alternador',               'Testigo de batería que parpadea. Carga irregular.', null, 0, 12],
+  [1, 1, 'pausada:num_pedido',    2, 'preventivo', 'manual',   'Revisión 2000 h y cambio de neumáticos',          null, 'Ibaizabal exige nº de pedido: reclamar a compras.', 1, 15, { via: ['planificada', 'en_curso', 'finalizada'] }],
+  [5, 1, 'finalizada:vb_factura', 3, 'correctivo', 'manual',   'Cristal de la cabina roto',                       'Cristal lateral derecho roto por una piedra.', null, 2, 18],
+  [10, 0, 'cerrada:facturada',    2, 'correctivo', 'manual',   'Reparación del motor de traslación',              'Cerrada antes de la baja del cliente.', null, 0, 40],
+  [3, 1, 'cerrada:facturada',     3, 'preventivo', 'correo',   'Revisión 250 h',                                  null, null, 1, 30],
 ];
 
-// Camino estándar desde "abierta" hasta cada estado (los intermedios no estándar van en extras.via).
+// Camino estándar desde "pendiente_planificar" hasta cada vertical (los intermedios no estándar van en extras.via).
 const CAMINOS = {
-  abierta: [],
-  pendiente_repuesto: ['pendiente_repuesto'],
-  pendiente_asignacion: ['pendiente_asignacion'],
-  asignada: ['pendiente_asignacion', 'asignada'],
-  en_curso: ['pendiente_asignacion', 'asignada', 'en_curso'],
-  pausada: ['pendiente_asignacion', 'asignada', 'en_curso', 'pausada'],
-  finalizada: ['pendiente_asignacion', 'asignada', 'en_curso', 'finalizada'],
-  pendiente_pedido: ['pendiente_asignacion', 'asignada', 'en_curso', 'finalizada', 'pendiente_pedido'],
-  vb_factura: ['pendiente_asignacion', 'asignada', 'en_curso', 'finalizada', 'vb_factura'],
-  cerrada: ['pendiente_asignacion', 'asignada', 'en_curso', 'finalizada', 'vb_factura', 'cerrada'],
+  pendiente_planificar: [],
+  planificada: ['planificada'],
+  en_curso: ['planificada', 'en_curso'],
+  pausada: ['planificada', 'en_curso', 'pausada'],
+  finalizada: ['planificada', 'en_curso', 'finalizada'],
+  cerrada: ['planificada', 'en_curso', 'finalizada', 'cerrada'],
 };
 
 const NOTAS = {
-  pendiente_repuesto: ['Faltan piezas: pedido cursado al proveedor.', 'A la espera del repuesto.'],
-  pendiente_asignacion: ['Pendiente de asignar técnico.', 'Lista para planificar.'],
   en_curso: ['Empiezo con la máquina en el taller.', 'Comienzo la intervención en casa del cliente.', 'Desmontando para diagnosticar.'],
-  pausada: ['Pausada a la espera del cliente.'],
+  pausada: ['Faltan piezas: pedido cursado al proveedor.', 'A la espera del cliente.', 'Pendiente de recibir el nº de pedido del cliente.'],
   finalizada: ['Reparación terminada y máquina probada. OK.', 'Trabajo terminado, entregada al cliente.'],
-  pendiente_pedido: ['Pendiente de recibir el nº de pedido del cliente.'],
-  vb_factura: ['Visto bueno para facturar.'],
   cerrada: ['Facturada y cerrada.'],
 };
 
@@ -279,11 +271,14 @@ const generar = db.transaction(() => {
   const insHist = db.prepare('INSERT INTO ot_historial (ot_id, estado_anterior, estado_nuevo, usuario_id, fecha, nota) VALUES (?, ?, ?, ?, ?, ?)');
   const insAsig = db.prepare(`INSERT INTO ot_asignaciones (ot_id, tecnico_id, origen, propuesto_por, estado, fecha, resuelto_por, resuelto_en, nota) VALUES (?, ?, 'manual', ?, ?, ?, ?, ?, ?)`);
   const estadoPor = Object.fromEntries(db.prepare('SELECT codigo, fase FROM estados').all().map((e) => [e.codigo, e.fase]));
+  const etiquetaPor = Object.fromEntries(db.prepare('SELECT codigo, nombre FROM etiquetas').all().map((e) => [e.codigo, e.nombre]));
 
   const ordenadas = OTS.map((o, i) => ({ o, i })).sort((a, b) => b.o[10] - a.o[10] || a.i - b.i);
   let diaAnterior = null, enElDia = 0;
   for (const { o, i } of ordenadas) {
-    const [ci, mi, estadoFinal, prioridad, tipo, origen, sintoma, descripcion, notas, tec, dias, extras = {}] = o;
+    const [ci, mi, destinoFinal, prioridad, tipo, origen, sintoma, descripcion, notas, tec, dias, extras = {}] = o;
+    const [estadoFinal, etiquetaFinal = null] = destinoFinal.split(':');
+    if (etiquetaFinal && !etiquetaPor[etiquetaFinal]) throw new Error(`Etiqueta desconocida en el seed: ${etiquetaFinal}`);
     const camino = extras.via ? [...extras.via, estadoFinal] : CAMINOS[estadoFinal];
     const tecnico = tec === null ? null : tecnicos[tec];
     enElDia = dias === diaAnterior ? enElDia + 1 : 0; // varias O.T. el mismo día: horas crecientes para que el número siga la cronología
@@ -291,32 +286,34 @@ const generar = db.transaction(() => {
     const creado = fechaHace(dias, 8 + enElDia * 2, i * 9);
     const num = siguienteNumeroOT(); // formato Karve (10 dígitos), correlativo con el contador local
     const pasosTotales = camino.length;
-    const asignada = camino.includes('asignada') && tecnico;
+    const asignada = camino.includes('planificada') && tecnico;
     const version = 1 + pasosTotales + (asignada ? 1 : 0);
     const minutosPorPaso = Math.max(45, Math.floor((dias * 24 * 60 * 0.8) / Math.max(1, pasosTotales)));
     let fecha = new Date(creado);
     const ultima = () => fmt(fecha);
     const maquinaId = mi === null ? null : maquinaIds[ci][mi] ?? null;
-    const info = insOT.run(num.numero, creado.getFullYear(), num.secuencia, clienteIds[ci], maquinaId, 'abierta', prioridad, tipo, origen, sintoma, descripcion, notas, null, admin.id, fmt(creado), null, 1);
+    const info = insOT.run(num.numero, creado.getFullYear(), num.secuencia, clienteIds[ci], maquinaId, 'pendiente_planificar', prioridad, tipo, origen, sintoma, descripcion, notas, null, admin.id, fmt(creado), null, 1);
     const otId = info.lastInsertRowid;
-    insHist.run(otId, null, 'abierta', admin.id, fmt(creado), 'Apertura de la O.T.');
+    insHist.run(otId, null, 'pendiente_planificar', admin.id, fmt(creado), 'Apertura de la O.T.');
 
-    let anterior = 'abierta';
+    let anterior = 'pendiente_planificar';
     camino.forEach((destino, k) => {
       fecha = new Date(fecha.getTime() + minutosPorPaso * 60000);
+      const ultimoPaso = k === camino.length - 1;
       let usuario = admin;
       let nota = elegir(NOTAS[destino] || [null], i + k);
-      if (destino === 'asignada') {
+      if (destino === 'planificada') {
         usuario = admin;
-        nota = `Técnico asignado: ${tecnico.nombre}`;
+        nota = `Técnico: ${tecnico.nombre}`;
         insAsig.run(otId, tecnico.id, admin.id, 'aprobada', fmt(new Date(fecha.getTime() - 10 * 60000)), admin.id, ultima(), null);
+      } else if (destino === 'pausada' && anterior === 'pendiente_planificar') {
+        usuario = recambista;
       } else if (['en_curso', 'pausada', 'finalizada'].includes(destino) && tecnico) {
         usuario = tecnico;
-      } else if (['pendiente_pedido', 'vb_factura', 'cerrada'].includes(destino)) {
+      } else if (destino === 'cerrada' || (ultimoPaso && ['num_pedido', 'vb_factura'].includes(etiquetaFinal))) {
         usuario = financiero;
-      } else if (destino === 'pendiente_repuesto' && anterior === 'abierta') {
-        usuario = recambista;
       }
+      if (ultimoPaso && etiquetaFinal) nota = `[${etiquetaPor[etiquetaFinal]}]${nota ? ' · ' + nota : ''}`;
       insHist.run(otId, anterior, destino, usuario.id, ultima(), nota);
       anterior = destino;
     });
@@ -325,8 +322,8 @@ const generar = db.transaction(() => {
       fecha = new Date(fecha.getTime() + 30 * 60000);
       insAsig.run(otId, propuesto.id, admin.id, 'propuesta', ultima(), null, null, 'Propongo a ' + propuesto.nombre + ', conoce la máquina.');
     }
-    db.prepare('UPDATE ot SET estado = ?, tecnico_id = ?, version = ?, actualizado = ? WHERE id = ?')
-      .run(estadoFinal, asignada ? tecnico.id : null, version, camino.length ? ultima() : null, otId);
+    db.prepare('UPDATE ot SET estado = ?, etiqueta = ?, tecnico_id = ?, version = ?, actualizado = ?, fecha_cierre = ? WHERE id = ?')
+      .run(estadoFinal, etiquetaFinal, asignada ? tecnico.id : null, version, camino.length ? ultima() : null, estadoFinal === 'cerrada' ? ultima() : null, otId);
     resumen.ots++;
     const fase = estadoPor[estadoFinal] || estadoFinal;
     resumen.porFase[fase] = (resumen.porFase[fase] || 0) + 1;

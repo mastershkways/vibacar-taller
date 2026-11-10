@@ -6,20 +6,23 @@
 //   - una muestra de las cerradas más recientes (TOP n por fechaCierre, sin fechas futuras), para la columna de cerradas.
 //   Solo ids numéricos (hay 27 históricos con sufijo, p. ej. 0058757MO).
 //
-// Mapeo del estado de Karve (nomEstado) al estado local / fase del Kanban. Todas las vivas de Karve llevan operario,
-// así que el trabajo pendiente va a 'asignada' (no a 'pendiente_asignacion'). Los estados sin nombre son históricos.
+// Mapeo del estado de Karve (nomEstado) a la vertical del Tablero v2 + etiqueta (F4-04). Todas las vivas de Karve llevan
+// operario, así que el trabajo pendiente va a 'planificada'. Los estados sin nombre son históricos.
 const ESTADO_LOCAL = {
-  asignada:           ['HACER', 'URGENTE', 'MTO', 'MTO URGENTE', 'INSPECCION', 'GARANTIA', 'FURGO', 'TRANSPORTE', 'IN DATE', 'ENTRYLIST', 'M. STOP', 'PERSONAL', 'FORMACION', 'COMERCIAL'],
-  pendiente_repuesto: ['RECAMBIOS', 'REC. URG.', 'ALMACEN', 'ALMACEN URG.', 'PROVEEDOR', 'RE. PEDIDO', 'RE.PE.URG', 'CONSULTADO REC.'],
-  pausada:            ['PPTO', 'PPTO URG.', 'PDTE OK PPTO', 'PDTE. DICTAMEN'],      // a la espera del cliente (presupuesto, dictamen)
-  en_curso:           ['S.A.T. EXTERNO'],                                            // en manos del SAT externo (sin técnico local → alcance gestor_sat)
-  finalizada:         ['HECHO', 'PDTE ALBARAN'],
-  pendiente_pedido:   ['PDTE Nº PEDIDO'],
-  vb_factura:         ['Vº B FACT.', 'Vº B F. P.'],
+  'planificada':            ['HACER', 'URGENTE', 'MTO', 'MTO URGENTE', 'INSPECCION', 'GARANTIA', 'FURGO', 'TRANSPORTE', 'IN DATE', 'ENTRYLIST', 'M. STOP', 'PERSONAL', 'FORMACION', 'COMERCIAL'],
+  'pausada:repuesto':       ['RECAMBIOS', 'REC. URG.', 'ALMACEN', 'ALMACEN URG.', 'PROVEEDOR', 'RE. PEDIDO', 'RE.PE.URG', 'CONSULTADO REC.'],
+  'pausada:presupuesto':    ['PPTO', 'PPTO URG.', 'PDTE. DICTAMEN'],                 // a la espera del cliente (presupuesto, dictamen)
+  'pausada:ok_presupuesto': ['PDTE OK PPTO'],
+  'en_curso:sat_externo':   ['S.A.T. EXTERNO'],                                      // en manos del SAT externo (sin técnico local → alcance operativo)
+  'finalizada':             ['HECHO'],
+  'finalizada:albaran':     ['PDTE ALBARAN'],
+  'pausada:num_pedido':     ['PDTE Nº PEDIDO'],
+  'finalizada:vb_factura':  ['Vº B FACT.', 'Vº B F. P.'],
 };
-// Cerrada en Karve (fechaCierre o anulada) → 'cerrada'. Estado desconocido → 'abierta' con aviso.
+// Cerrada en Karve → 'cerrada' (etiqueta anulada si lo está). Estado desconocido → 'pendiente_planificar' con aviso.
 //
-// Otros campos: prioridad alta si urgente o el estado es urgente (URG, M. STOP); tipo preventivo si mantenimiento o el
+// Prioridad: solo existe en la app (gerencia 2026-11-06). Al crear la O.T. se propone alta si Karve la marca urgente (URG,
+// M. STOP); en las importaciones siguientes la prioridad no se toca. Tipo preventivo si mantenimiento o el
 // albarán es de mantenimiento preventivo (mp, mpa, mpr); síntoma = avisos (texto corto de Karve) o la descripción breve;
 // descripción = observaciones (+ anomalías); notas internas = tipo de albarán, persona de contacto, ubicación, referencia,
 // presupuesto, pedido, factura. Técnico local solo si hay un usuario con ese código de operario (usuarios.karve_id);
@@ -91,13 +94,15 @@ function traducir(fila, mapas, resumen, grupo) {
 
   const nomEstado = normalizarEstado(fila.nomEstado);
   const fechaCierre = fechaLocal(fila.fechaCierre);
-  let estado;
-  if (fechaCierre || Number(fila.anulada)) estado = 'cerrada';
+  let estado, etiqueta = null;
+  if (fechaCierre || Number(fila.anulada)) { estado = 'cerrada'; etiqueta = Number(fila.anulada) ? 'anulada' : null; }
   else {
-    estado = LOCAL_POR_KARVE.get(nomEstado);
-    if (!estado) { estado = 'abierta'; resumen.estados_desconocidos.add(nomEstado || '(sin estado)'); }
+    const clave = LOCAL_POR_KARVE.get(nomEstado);
+    if (clave) [estado, etiqueta = null] = clave.split(':');
+    else { estado = 'pendiente_planificar'; resumen.estados_desconocidos.add(nomEstado || '(sin estado)'); }
   }
   if (!mapas.estados.has(estado)) throw new Error(`El estado local "${estado}" no existe en la tabla estados`);
+  if (etiqueta && !mapas.etiquetas.has(etiqueta)) throw new Error(`La etiqueta "${etiqueta}" no existe en la tabla etiquetas`);
 
   const urgente = Number(fila.urgente) === 1 || /URG|STOP/.test(nomEstado);
   const albaran = (limpiar(fila.tipoAlbaran) || '').toLowerCase();
@@ -119,7 +124,7 @@ function traducir(fila, mapas, resumen, grupo) {
   const fechaAsignacion = fechaLocal(fila.fechaAsignacion);
   return {
     numero, anio: Number(creado.slice(0, 4)), secuencia: Number(numero),
-    cliente_id: clienteId, maquina_id: maquinaId, estado,
+    cliente_id: clienteId, maquina_id: maquinaId, estado, etiqueta,
     prioridad: urgente ? 1 : 2, tipo, origen: 'karve',
     sintoma, descripcion, notas_internas: notas,
     tecnico_id: operario ? mapas.tecnicos.get(operario) ?? null : null,
@@ -132,7 +137,9 @@ function traducir(fila, mapas, resumen, grupo) {
   };
 }
 
-const CAMPOS_UPSERT = ['cliente_id', 'maquina_id', 'estado', 'prioridad', 'tipo', 'sintoma', 'descripcion', 'notas_internas', 'tecnico_id', 'creado', 'actualizado', 'karve_estado', 'karve_operario', 'fecha_prevista', 'fecha_cierre'];
+// La prioridad solo entra al crear (después es de la app); el resto se actualiza mientras la O.T. no se haya tocado aquí.
+const CAMPOS_UPDATE = ['cliente_id', 'maquina_id', 'estado', 'etiqueta', 'tipo', 'sintoma', 'descripcion', 'notas_internas', 'tecnico_id', 'creado', 'actualizado', 'karve_estado', 'karve_operario', 'fecha_prevista', 'fecha_cierre'];
+const CAMPOS_UPSERT = [...CAMPOS_UPDATE, 'prioridad'];
 
 function aplicar(datos, resumen, avisar) {
   const mapas = {
@@ -140,11 +147,12 @@ function aplicar(datos, resumen, avisar) {
     maquinas: new Map(db.prepare('SELECT karve_id, id FROM maquinas WHERE karve_id IS NOT NULL').all().map((m) => [limpiar(m.karve_id), m.id])),
     tecnicos: new Map(db.prepare("SELECT karve_id, id FROM usuarios WHERE karve_id IS NOT NULL AND activo = 1 AND rol IN ('tecnico', 'sat')").all().map((u) => [limpiar(u.karve_id), u.id])),
     estados: new Set(db.prepare('SELECT codigo FROM estados WHERE activo = 1').all().map((e) => e.codigo)),
+    etiquetas: new Set(db.prepare('SELECT codigo FROM etiquetas WHERE activo = 1').all().map((e) => e.codigo)),
   };
   const selPorNumero = db.prepare(`SELECT id, origen, version, ${CAMPOS_UPSERT.join(', ')} FROM ot WHERE numero = ?`);
   const insOT = db.prepare(`INSERT INTO ot (numero, anio, secuencia, ${CAMPOS_UPSERT.join(', ')}, origen, creado_por, version)
                             VALUES (?, ?, ?, ${CAMPOS_UPSERT.map(() => '?').join(', ')}, 'karve', NULL, 1)`);
-  const updOT = db.prepare(`UPDATE ot SET ${CAMPOS_UPSERT.map((c) => `${c} = ?`).join(', ')} WHERE id = ?`);
+  const updOT = db.prepare(`UPDATE ot SET ${CAMPOS_UPDATE.map((c) => `${c} = ?`).join(', ')} WHERE id = ?`);
   const insHist = db.prepare('INSERT INTO ot_historial (ot_id, estado_anterior, estado_nuevo, usuario_id, fecha, nota) VALUES (?, ?, ?, NULL, ?, ?)');
   const vistos = new Set();
 
@@ -163,13 +171,14 @@ function aplicar(datos, resumen, avisar) {
         const info = insOT.run(t.numero, t.anio, t.secuencia, ...valores);
         insHist.run(info.lastInsertRowid, null, t.estado, t.creado, `Importada de Karve (${etiqueta})`);
         r.nuevas++;
-        resumen.por_estado[t.estado] = (resumen.por_estado[t.estado] || 0) + 1;
+        const claveEstado = t.etiqueta ? `${t.estado}:${t.etiqueta}` : t.estado;
+        resumen.por_estado[claveEstado] = (resumen.por_estado[claveEstado] || 0) + 1;
         continue;
       }
       if (existente.origen !== 'karve' || existente.version !== 1) { r.conservadas++; continue; }
-      const cambia = CAMPOS_UPSERT.some((c) => (existente[c] ?? null) !== (t[c] ?? null));
+      const cambia = CAMPOS_UPDATE.some((c) => (existente[c] ?? null) !== (t[c] ?? null));
       if (!cambia) { r.sin_cambios++; continue; }
-      updOT.run(...valores, existente.id);
+      updOT.run(...CAMPOS_UPDATE.map((c) => t[c]), existente.id);
       if (existente.estado !== t.estado) insHist.run(existente.id, existente.estado, t.estado, ahora(), `Actualizada desde Karve (${etiqueta})`);
       r.actualizadas++;
     }
@@ -184,7 +193,7 @@ function aplicar(datos, resumen, avisar) {
     if (r.omitidas_numero) avisar(`${r.omitidas_numero} O.T. ${g} con número o fecha no válidos: omitidas`);
     if (r.conservadas) avisar(`${r.conservadas} O.T. ${g} ya modificadas en la aplicación: se conservan tal cual`);
   }
-  if (resumen.estados_desconocidos.size) avisar(`Estados de Karve sin mapeo (van a "Abierta"): ${[...resumen.estados_desconocidos].join(', ')}`);
+  if (resumen.estados_desconocidos.size) avisar(`Estados de Karve sin mapeo (van a "Pendiente de planificar"): ${[...resumen.estados_desconocidos].join(', ')}`);
 }
 
 async function importar({ entorno = 'copia', cerradas = CERRADAS_DEFECTO, origen = 'manual', usuarioId = null, simular = false } = {}) {

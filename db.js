@@ -110,7 +110,7 @@ CREATE TABLE IF NOT EXISTS maquinas (
 CREATE INDEX IF NOT EXISTS idx_maquinas_cliente ON maquinas(cliente_id);
 CREATE INDEX IF NOT EXISTS idx_maquinas_bastidor ON maquinas(bastidor);
 
--- Fases: columnas del Kanban. Varios estados pueden pertenecer a la misma fase.
+-- Fases: columnas del Tablero (F4-04: 5 verticales + cerrada). Varios estados pueden pertenecer a la misma fase.
 CREATE TABLE IF NOT EXISTS fases (
   codigo  TEXT    PRIMARY KEY,
   nombre  TEXT    NOT NULL,
@@ -118,7 +118,8 @@ CREATE TABLE IF NOT EXISTS fases (
   abierta INTEGER NOT NULL DEFAULT 1          -- 1 = la O.T. sigue viva (se muestra en el Kanban)
 );
 
--- Estados: los ~50 reales se cargarán aquí (desde Karve). De momento, uno por fase.
+-- Estados: uno por fase (F4-04). Lo que antes eran estados intermedios (pendiente de repuesto, pendiente de nº de pedido…)
+-- ahora son etiquetas dentro de la vertical. Los estados antiguos quedan con activo = 0 para que el historial siga leyéndose.
 CREATE TABLE IF NOT EXISTS estados (
   codigo             TEXT    PRIMARY KEY,
   nombre             TEXT    NOT NULL,
@@ -132,7 +133,8 @@ CREATE TABLE IF NOT EXISTS estados (
 );
 CREATE INDEX IF NOT EXISTS idx_estados_fase ON estados(fase);
 
--- Transiciones permitidas: de qué estado a cuál, y qué rol puede hacerlo ('*' = cualquiera).
+-- Transiciones: desde F4-04 el flujo es libre (cualquier estado → cualquier estado con confirmación) y esta tabla ya no
+-- limita nada; se conserva vacía para marcar, en la Fase 5, qué cambios disparan avisos.
 CREATE TABLE IF NOT EXISTS transiciones (
   id       INTEGER PRIMARY KEY AUTOINCREMENT,
   origen   TEXT NOT NULL REFERENCES estados(codigo),
@@ -215,6 +217,37 @@ CREATE TABLE IF NOT EXISTS cliente_contactos (
 );
 CREATE INDEX IF NOT EXISTS idx_cliente_contactos_cliente ON cliente_contactos(cliente_id);
 
+-- F4-01: etiquetas dentro de cada vertical del Tablero (motivo de la pausa, situación de la finalizada, cómo se cerró…).
+-- responsable = rol que "limpia" esa etiqueta (recambista los repuestos, administrativo el nº de pedido y la facturación…).
+CREATE TABLE IF NOT EXISTS etiquetas (
+  codigo      TEXT    PRIMARY KEY,
+  nombre      TEXT    NOT NULL,
+  estado      TEXT    NOT NULL REFERENCES estados(codigo),
+  orden       INTEGER NOT NULL DEFAULT 0,
+  responsable TEXT,                          -- rol responsable (informativo; el Tablero lo resalta)
+  color       TEXT,
+  activo      INTEGER NOT NULL DEFAULT 1
+);
+CREATE INDEX IF NOT EXISTS idx_etiquetas_estado ON etiquetas(estado);
+
+-- F4-01: bloques de planificación. Una O.T. puede ocupar varios días y/o varios técnicos; 0 bloques = sin planificar.
+-- La duración la pone quien planifica (2 h por defecto); los bloques pasados se conservan (previsto frente a fichado).
+CREATE TABLE IF NOT EXISTS ot_bloques (
+  id            INTEGER PRIMARY KEY AUTOINCREMENT,
+  ot_id         INTEGER NOT NULL REFERENCES ot(id) ON DELETE CASCADE,
+  tecnico_id    INTEGER NOT NULL REFERENCES usuarios(id),
+  dia           TEXT    NOT NULL,              -- 'YYYY-MM-DD'
+  hora_inicio   TEXT    NOT NULL DEFAULT '08:00',
+  duracion_min  INTEGER NOT NULL DEFAULT 120,
+  orden         INTEGER NOT NULL DEFAULT 1,    -- orden dentro del día del técnico
+  nota          TEXT,
+  creado_por    INTEGER REFERENCES usuarios(id),
+  creado        TEXT    NOT NULL DEFAULT (datetime('now','localtime')),
+  actualizado   TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_ot_bloques_ot ON ot_bloques(ot_id);
+CREATE INDEX IF NOT EXISTS idx_ot_bloques_tecnico_dia ON ot_bloques(tecnico_id, dia);
+
 CREATE TABLE IF NOT EXISTS sincronizaciones (
   id          INTEGER PRIMARY KEY AUTOINCREMENT,
   inicio      TEXT    NOT NULL,
@@ -265,6 +298,9 @@ const COLUMNAS_NUEVAS = [
   ['ot', 'karve_operario', 'TEXT'],
   ['ot', 'fecha_prevista', 'TEXT'],
   ['ot', 'fecha_cierre', 'TEXT'],
+  // Fase 4 (F4-01): etiqueta dentro de la vertical (catálogo `etiquetas`) y roles que "limpian" cada vertical.
+  ['ot', 'etiqueta', 'TEXT'],
+  ['estados', 'responsables', 'TEXT'],                     // roles separados por coma; el Tablero resalta "tu vertical"
 ];
 
 function asegurarColumna(tabla, columna, definicion) {
@@ -286,13 +322,13 @@ function migrarRoles() {
     const admin = (process.env.APP_USUARIO || '').trim();
     if (admin) db.prepare("UPDATE usuarios SET rol = 'administrativo' WHERE usuario = ? AND rol = 'admontaller'").run(admin);
     for (const [viejo, nuevo] of Object.entries(ROLES_ANTIGUOS)) db.prepare('UPDATE usuarios SET rol = ? WHERE rol = ?').run(nuevo, viejo);
-    console.log(`   BD: ${n} usuario(s) con roles antiguos migrados (admontaller → responsable_st, financiero → administrativo${admin ? `; "${admin}" → administrativo` : ''})`);
+    console.log(`   BD: ${n} usuario(s) con roles antiguos migrados (${Object.entries(ROLES_ANTIGUOS).map(([v, nv]) => `${v} → ${nv}`).join(', ')}${admin ? `; "${admin}" → administrativo` : ''})`);
   }
   const filas = db.prepare(`SELECT origen, destino, rol FROM transiciones WHERE rol IN (${marcas})`).all(...viejos);
   if (filas.length) {
     const existe = db.prepare('SELECT 1 FROM transiciones WHERE origen = ? AND destino = ? AND rol = ?');
     const ins = db.prepare('INSERT INTO transiciones (origen, destino, rol) VALUES (?, ?, ?)');
-    for (const t of filas) for (const rol of (t.rol === 'admontaller' ? OFICINA : ['administrativo'])) if (!existe.get(t.origen, t.destino, rol)) ins.run(t.origen, t.destino, rol);
+    for (const t of filas) for (const rol of (t.rol === 'admontaller' ? OFICINA : [ROLES_ANTIGUOS[t.rol]])) if (!existe.get(t.origen, t.destino, rol)) ins.run(t.origen, t.destino, rol);
     db.prepare(`DELETE FROM transiciones WHERE rol IN (${marcas})`).run(...viejos);
     console.log(`   BD: ${filas.length} transiciones migradas a los roles nuevos`);
   }
@@ -317,67 +353,104 @@ function migrarNumeracion() {
   if (flota.changes) console.log('   BD: contadores de nº de flota retirados');
 }
 
+// F4-04 (2026-11-10): Tablero v2. Los 10 estados provisionales pasan a 5 verticales + cerrada, con etiquetas dentro.
+// Los estados antiguos se quedan inactivos (el historial los sigue nombrando) colgando de su vertical nueva; sus fases
+// antiguas se borran. Cada O.T. se recoloca según su estado antiguo y, si viene de Karve, según `karve_estado`.
+const ESTADO_V2_POR_ANTIGUO = {
+  abierta:              ['pendiente_planificar', null],
+  pendiente_asignacion: ['pendiente_planificar', null],
+  asignada:             ['planificada', null],
+  pendiente_repuesto:   ['pausada', 'repuesto'],
+  pendiente_pedido:     ['pausada', 'num_pedido'],
+  vb_factura:           ['finalizada', 'vb_factura'],
+};
+const ETIQUETA_V2_POR_KARVE = {
+  'PDTE OK PPTO': 'ok_presupuesto', 'PPTO': 'presupuesto', 'PPTO URG.': 'presupuesto', 'PDTE. DICTAMEN': 'presupuesto',
+  'S.A.T. EXTERNO': 'sat_externo', 'PDTE ALBARAN': 'albaran',
+};
+function migrarTableroV2() {
+  const antiguos = Object.keys(ESTADO_V2_POR_ANTIGUO);
+  const marcas = antiguos.map(() => '?').join(', ');
+  const activos = db.prepare(`SELECT codigo FROM estados WHERE activo = 1 AND codigo IN (${marcas})`).all(...antiguos).map((e) => e.codigo);
+  if (!activos.length) return; // ya migrada (o base nueva)
+  const insFase = db.prepare('INSERT OR IGNORE INTO fases (codigo, nombre, orden, abierta) VALUES (?, ?, ?, ?)');
+  const updFase = db.prepare('UPDATE fases SET nombre = ?, orden = ?, abierta = ? WHERE codigo = ?');
+  for (const f of FASES_SEMILLA) { insFase.run(...f); updFase.run(f[1], f[2], f[3], f[0]); }
+  const insEstado = db.prepare(`INSERT OR IGNORE INTO estados (codigo, nombre, fase, orden, es_inicial, es_final, prioridad_defecto, color, responsables, activo)
+                                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1)`);
+  const updEstado = db.prepare('UPDATE estados SET nombre = ?, fase = ?, orden = ?, es_inicial = ?, es_final = ?, prioridad_defecto = ?, color = ?, responsables = ?, activo = 1 WHERE codigo = ?');
+  for (const e of ESTADOS_SEMILLA) { insEstado.run(...e); updEstado.run(e[1], e[2], e[3], e[4], e[5], e[6], e[7], e[8], e[0]); }
+  const insEtiqueta = db.prepare('INSERT OR IGNORE INTO etiquetas (codigo, nombre, estado, orden, responsable, color) VALUES (?, ?, ?, ?, ?, ?)');
+  for (const t of ETIQUETAS_SEMILLA) insEtiqueta.run(...t);
+
+  // O.T. de cada estado antiguo → (estado nuevo, etiqueta); las de en_curso/pausada/finalizada reciben etiqueta por su estado de Karve.
+  const updOT = db.prepare('UPDATE ot SET estado = ?, etiqueta = ? WHERE id = ?');
+  const porEstado = {};
+  for (const o of db.prepare(`SELECT id, estado, karve_estado, etiqueta FROM ot WHERE estado IN (${marcas}) OR (etiqueta IS NULL AND karve_estado IS NOT NULL AND estado IN ('en_curso', 'pausada', 'finalizada'))`).all(...antiguos)) {
+    const [nuevo, etiquetaBase] = ESTADO_V2_POR_ANTIGUO[o.estado] || [o.estado, null];
+    const etiqueta = ETIQUETA_V2_POR_KARVE[o.karve_estado] && ['pausada', 'en_curso', 'finalizada'].includes(nuevo) ? ETIQUETA_V2_POR_KARVE[o.karve_estado] : etiquetaBase;
+    updOT.run(nuevo, etiqueta, o.id);
+    porEstado[nuevo] = (porEstado[nuevo] || 0) + 1;
+  }
+  // Estados antiguos: inactivos y colgados de la vertical nueva; sus fases desaparecen. Las transiciones ya no se usan.
+  const updViejo = db.prepare('UPDATE estados SET activo = 0, es_inicial = 0, fase = ? WHERE codigo = ?');
+  for (const viejo of activos) updViejo.run(ESTADO_V2_POR_ANTIGUO[viejo][0], viejo);
+  db.exec('DELETE FROM transiciones');
+  db.prepare(`DELETE FROM fases WHERE codigo IN (${marcas})`).run(...antiguos);
+  console.log(`   BD: Tablero v2: ${activos.length} estados antiguos retirados; O.T. recolocadas: ${Object.entries(porEstado).map(([e, n]) => `${e} ${n}`).join(', ') || 'ninguna'}`);
+}
+
 function migrar() {
   db.exec(TABLAS);
   for (const [tabla, columna, definicion] of COLUMNAS_NUEVAS) asegurarColumna(tabla, columna, definicion);
   migrarRoles();
   migrarNumeracion();
   sembrar();
+  migrarTableroV2();
 }
 
 // ---------------------------------------------------------------------------
 // Semillas (solo cuando la tabla correspondiente está vacía; lo editado en BD manda)
 // ---------------------------------------------------------------------------
 
-// Fases provisionales del Kanban, en orden. Los estados reales de Karve se mapearán a estas fases.
+// Verticales del Tablero v2 (F4-04, decisión de gerencia 2026-11-06 / Sendoa 2026-11-10), en orden. Cerrada no se muestra.
 const FASES_SEMILLA = [
-  ['abierta',              'Abierta',                 1, 1],
-  ['pendiente_repuesto',   'Pendiente de repuesto',   2, 1],
-  ['pendiente_asignacion', 'Pendiente de asignación', 3, 1],
-  ['asignada',             'Asignada',                4, 1],
-  ['en_curso',             'En curso',                5, 1],
-  ['pausada',              'Pausada',                 6, 1],
-  ['finalizada',           'Finalizada',              7, 1],
-  ['pendiente_pedido',     'Pendiente de Nº pedido',  8, 1],
-  ['vb_factura',           'Visto bueno factura',     9, 1],
-  ['cerrada',              'Cerrada',                10, 0],
+  ['pendiente_planificar', 'Pendiente de planificar', 1, 1],
+  ['planificada',          'Planificada',             2, 1],
+  ['en_curso',             'En curso',                3, 1],
+  ['pausada',              'Pausada',                 4, 1],
+  ['finalizada',           'Finalizada',              5, 1],
+  ['cerrada',              'Cerrada',                 6, 0],
 ];
 
-// Estados provisionales: uno por fase, mismo código. [codigo, nombre, fase, orden, es_inicial, es_final, prioridad, color]
+// Un estado por vertical, mismo código. [codigo, nombre, fase, orden, es_inicial, es_final, prioridad, color, responsables]
+// `responsables` = roles que "limpian" esa vertical (el Tablero se la resalta y pueden filtrar "solo mi vertical").
 const ESTADOS_SEMILLA = [
-  ['abierta',              'Abierta',                 'abierta',              1, 1, 0, 2, '#6b7280'],
-  ['pendiente_repuesto',   'Pendiente de repuesto',   'pendiente_repuesto',   1, 0, 0, 2, '#f59e0b'],
-  ['pendiente_asignacion', 'Pendiente de asignación', 'pendiente_asignacion', 1, 0, 0, 2, '#eab308'],
-  ['asignada',             'Asignada',                'asignada',             1, 0, 0, 2, '#3b82f6'],
-  ['en_curso',             'En curso',                'en_curso',             1, 0, 0, 2, '#2563eb'],
-  ['pausada',              'Pausada',                 'pausada',              1, 0, 0, 2, '#a855f7'],
-  ['finalizada',           'Finalizada',              'finalizada',           1, 0, 0, 2, '#10b981'],
-  ['pendiente_pedido',     'Pendiente de Nº pedido',  'pendiente_pedido',     1, 0, 0, 2, '#f97316'],
-  ['vb_factura',           'Visto bueno factura',     'vb_factura',           1, 0, 0, 2, '#14b8a6'],
-  ['cerrada',              'Cerrada',                 'cerrada',              1, 0, 1, 2, '#374151'],
+  ['pendiente_planificar', 'Pendiente de planificar', 'pendiente_planificar', 1, 1, 0, 2, '#6b7280', 'responsable_st,operativo'],
+  ['planificada',          'Planificada',             'planificada',          1, 0, 0, 2, '#3b82f6', 'responsable_st,operativo'],
+  ['en_curso',             'En curso',                'en_curso',             1, 0, 0, 2, '#2563eb', 'tecnico,sat,operativo'],
+  ['pausada',              'Pausada',                 'pausada',              1, 0, 0, 2, '#a855f7', 'recambista,administrativo,operativo'],
+  ['finalizada',           'Finalizada',              'finalizada',           1, 0, 0, 2, '#10b981', 'administrativo,responsable_st'],
+  ['cerrada',              'Cerrada',                 'cerrada',              1, 0, 1, 2, '#374151', null],
 ];
 
-// Flujo básico provisional. [origen, destino, roles que pueden hacerlo]. OFICINA = los que mandan sobre la O.T. (F3-05).
-// En F4-04 el flujo pasa a ser libre y esta tabla solo marcará avisos.
-const OFICINA = ['administrativo', 'responsable_st', 'gestor_sat'];
-const TRANSICIONES_SEMILLA = [
-  ['abierta',              'pendiente_repuesto',   [...OFICINA, 'recambista']],
-  ['abierta',              'pendiente_asignacion', [...OFICINA]],
-  ['abierta',              'cerrada',              [...OFICINA]],                       // anulación
-  ['pendiente_repuesto',   'pendiente_asignacion', [...OFICINA, 'recambista']],
-  ['pendiente_asignacion', 'asignada',             [...OFICINA]],
-  ['asignada',             'en_curso',             [...OFICINA, 'tecnico', 'sat']],
-  ['asignada',             'pendiente_asignacion', [...OFICINA]],                       // reasignar
-  ['en_curso',             'pausada',              [...OFICINA, 'tecnico', 'sat']],
-  ['en_curso',             'pendiente_repuesto',   [...OFICINA, 'tecnico']],            // faltan piezas a mitad
-  ['en_curso',             'finalizada',           [...OFICINA, 'tecnico', 'sat']],
-  ['pausada',              'en_curso',             [...OFICINA, 'tecnico', 'sat']],
-  ['finalizada',           'pendiente_pedido',     [...OFICINA]],
-  ['finalizada',           'vb_factura',           [...OFICINA]],
-  ['finalizada',           'en_curso',             [...OFICINA]],                       // reabrir
-  ['pendiente_pedido',     'vb_factura',           [...OFICINA]],
-  ['vb_factura',           'cerrada',              [...OFICINA]],
+// Etiquetas dentro de cada vertical. [codigo, nombre, estado, orden, responsable, color]
+const ETIQUETAS_SEMILLA = [
+  ['repuesto',       'Pendiente de repuesto',      'pausada',    1, 'recambista',     '#f59e0b'],
+  ['presupuesto',    'Presupuesto',                'pausada',    2, 'operativo',      '#a855f7'],
+  ['ok_presupuesto', 'Pendiente OK presupuesto',   'pausada',    3, 'operativo',      '#c084fc'],
+  ['num_pedido',     'Pendiente de nº de pedido',  'pausada',    4, 'administrativo', '#f97316'],
+  ['espera_cliente', 'Espera del cliente',         'pausada',    5, 'operativo',      '#9ca3af'],
+  ['sat_externo',    'SAT externo',                'en_curso',   1, 'operativo',      '#0ea5e9'],
+  ['albaran',        'Pendiente de albarán',       'finalizada', 1, 'administrativo', '#14b8a6'],
+  ['vb_factura',     'Vº B factura',               'finalizada', 2, 'administrativo', '#0d9488'],
+  ['facturada',      'Facturada',                  'cerrada',    1, null,             '#374151'],
+  ['sin_cargo',      'Sin cargo',                  'cerrada',    2, null,             '#6b7280'],
+  ['anulada',        'Anulada',                    'cerrada',    3, null,             '#9ca3af'],
 ];
+
+// OFICINA = los que mandan sobre la O.T. (F3-05); se usa al migrar transiciones antiguas. Desde F4-04 el flujo es libre.
+const OFICINA = ['administrativo', 'responsable_st', 'operativo'];
 
 function tablaVacia(tabla) {
   return db.prepare(`SELECT COUNT(*) AS n FROM ${tabla}`).get().n === 0;
@@ -387,19 +460,18 @@ const sembrar = db.transaction(() => {
   if (tablaVacia('fases')) {
     const ins = db.prepare('INSERT INTO fases (codigo, nombre, orden, abierta) VALUES (?, ?, ?, ?)');
     for (const f of FASES_SEMILLA) ins.run(...f);
-    console.log(`   BD: cargadas ${FASES_SEMILLA.length} fases provisionales`);
+    console.log(`   BD: cargadas ${FASES_SEMILLA.length} fases (verticales del Tablero)`);
   }
   if (tablaVacia('estados')) {
-    const ins = db.prepare(`INSERT INTO estados (codigo, nombre, fase, orden, es_inicial, es_final, prioridad_defecto, color)
-                            VALUES (?, ?, ?, ?, ?, ?, ?, ?)`);
+    const ins = db.prepare(`INSERT INTO estados (codigo, nombre, fase, orden, es_inicial, es_final, prioridad_defecto, color, responsables)
+                            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`);
     for (const e of ESTADOS_SEMILLA) ins.run(...e);
-    console.log(`   BD: cargados ${ESTADOS_SEMILLA.length} estados provisionales`);
+    console.log(`   BD: cargados ${ESTADOS_SEMILLA.length} estados (verticales del Tablero)`);
   }
-  if (tablaVacia('transiciones')) {
-    const ins = db.prepare('INSERT INTO transiciones (origen, destino, rol) VALUES (?, ?, ?)');
-    let n = 0;
-    for (const [origen, destino, roles] of TRANSICIONES_SEMILLA) for (const rol of roles) { ins.run(origen, destino, rol); n++; }
-    console.log(`   BD: cargadas ${n} transiciones provisionales`);
+  if (tablaVacia('etiquetas') && db.prepare("SELECT 1 FROM estados WHERE codigo = 'pausada'").get()) {
+    const ins = db.prepare('INSERT INTO etiquetas (codigo, nombre, estado, orden, responsable, color) VALUES (?, ?, ?, ?, ?, ?)');
+    for (const t of ETIQUETAS_SEMILLA) ins.run(...t);
+    console.log(`   BD: cargadas ${ETIQUETAS_SEMILLA.length} etiquetas`);
   }
   if (tablaVacia('usuarios')) {
     const usuario = (process.env.APP_USUARIO || '').trim();
@@ -416,4 +488,4 @@ const sembrar = db.transaction(() => {
 
 migrar();
 
-module.exports = { db, migrar, ahora, hashClave, verificarClave, ROLES, RUTA_BD };
+module.exports = { db, migrar, ahora, hashClave, verificarClave, ROLES, RUTA_BD, ESTADO_V2_POR_ANTIGUO };

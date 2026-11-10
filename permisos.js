@@ -15,12 +15,14 @@
 //   clientes_propios → solo las O.T. de sus clientes (relación vendedor↔cliente, pendiente de Karve)
 // ---------------------------------------------------------------------------
 // `grupo` agrupa los roles en la pantalla de usuarios: tecnico (interno) | sat (externo) | oficina (el resto).
-// F3-05 (2026-11-02): roles del Field Service Management. `alcance` sat = O.T. de SAT externos o sin técnico.
+// F3-05 (2026-11-02): roles del Field Service Management.
+// F4-12 (2026-11-10): `gestor_sat` pasa a `operativo` (operativo administrativo): sus propias O.T. (las que abre él), las de
+// SAT externos y las que aún no tienen técnico; lleva la comunicación con el cliente y el proveedor. Alcance `operativo`.
 const ROLES = {
   administrativo: { nombre: 'Administrativo',                   alcance: 'todo',             grupo: 'oficina', descripcion: 'Ve y edita todo, incluidos los usuarios; único que corrige los campos bloqueados de una máquina' },
   responsable_st: { nombre: 'Responsable de Servicio Técnico',  alcance: 'todo',             grupo: 'oficina', descripcion: 'Toda la operativa: O.T., planificador, asignaciones y maestros; no gestiona usuarios' },
   gerencia:       { nombre: 'Gerencia',                         alcance: 'todo',             grupo: 'oficina', descripcion: 'Solo lectura de todo (Tablero, O.T., maestros, informes)' },
-  gestor_sat:     { nombre: 'Gestor de SAT externos',           alcance: 'sat',              grupo: 'oficina', descripcion: 'Opera y aprueba solo las O.T. de SAT externos (y las que aún no tienen técnico)' },
+  operativo:      { nombre: 'Operativo administrativo',         alcance: 'operativo',        grupo: 'oficina', descripcion: 'Gestiona sus propias O.T. y las de SAT externos (y las sin técnico); comunicación con el cliente y el proveedor' },
   tecnico:        { nombre: 'Técnico / Operario',               alcance: 'asignadas',        grupo: 'tecnico', descripcion: 'Tablet: sus O.T., tiempos, checklist, fotos, firma' },
   sat:            { nombre: 'SAT externo',                      alcance: 'asignadas',        grupo: 'sat',     descripcion: 'Operario externo: solo sus asignaciones' },
   recambista:     { nombre: 'Recambista / Almacén',             alcance: 'todo',             grupo: 'oficina', descripcion: 'Entrada de material y repuestos por O.T.' },
@@ -28,8 +30,12 @@ const ROLES = {
   comercial_jefe: { nombre: 'Jefe comercial',                   alcance: 'todo',             grupo: 'oficina', descripcion: 'Solo lectura del estado de las O.T. de todos los clientes' },
 };
 
-// Roles anteriores a F3-05 → nuevos. db.js los migra al arrancar (usuarios y transiciones).
-const ROLES_ANTIGUOS = { admontaller: 'responsable_st', financiero: 'administrativo' };
+// Roles anteriores → nuevos. db.js los migra al arrancar (usuarios y transiciones). F4-12: gestor_sat → operativo.
+const ROLES_ANTIGUOS = { admontaller: 'responsable_st', financiero: 'administrativo', gestor_sat: 'operativo' };
+
+// F4-04 (flujo libre): a qué estados puede llevar una O.T. quien solo ve las suyas (técnico interno y SAT externo).
+// El resto de roles con ot.cambiar_estado mueve a cualquier estado; los finales exigen además ot.cerrar.
+const DESTINOS_ASIGNADAS = ['en_curso', 'pausada', 'finalizada'];
 
 // ---------------------------------------------------------------------------
 // Acciones. Nombre "zona.accion" y descripción (sirve para documentar y para la pantalla de usuarios).
@@ -39,7 +45,8 @@ const ACCIONES = {
   'ot.ver':                 'Ver O.T. (dentro de su alcance)',
   'ot.crear':               'Abrir una O.T.',
   'ot.editar':              'Editar datos de la O.T. (cliente, máquina, síntoma, prioridad...)',
-  'ot.cambiar_estado':      'Cambiar el estado (siempre limitado por la tabla de transiciones y el rol)',
+  'ot.cambiar_estado':      'Cambiar el estado y la etiqueta (flujo libre con confirmación; técnico y SAT solo a en curso, pausada o finalizada)',
+  'ot.cerrar':              'Cerrar o reabrir una O.T. (estados finales)',
   'ot.asignar':             'Proponer un técnico para la O.T.',
   'ot.aprobar_asignacion':  'Aprobar o rechazar una propuesta de asignación',
   'ot.tiempos':             'Registrar inicio, pausas y fin de trabajo',
@@ -73,7 +80,7 @@ const MATRIZ = {
   administrativo: TODAS,
   responsable_st: TODAS.filter((a) => a !== 'usuarios.gestionar'),
   gerencia: ['ot.ver', 'clientes.ver', 'maquinas.ver', 'kanban.ver', 'informes.ver'],
-  gestor_sat: ['ot.ver', 'ot.crear', 'ot.editar', 'ot.cambiar_estado', 'ot.asignar', 'ot.aprobar_asignacion', 'clientes.ver', 'maquinas.ver', 'kanban.ver'],
+  operativo: ['ot.ver', 'ot.crear', 'ot.editar', 'ot.cambiar_estado', 'ot.cerrar', 'ot.asignar', 'ot.aprobar_asignacion', 'clientes.ver', 'maquinas.ver', 'kanban.ver'],
 
   tecnico: [
     'ot.ver', 'ot.cambiar_estado', 'ot.tiempos', 'ot.checklist', 'ot.fotos', 'ot.firmar',
@@ -149,4 +156,4 @@ function requierePermiso(...acciones) {
   };
 }
 
-module.exports = { ROLES, ROLES_ANTIGUOS, ACCIONES, MATRIZ, esRolValido, puede, permisosDe, alcanceDe, describirRol, requierePermiso };
+module.exports = { ROLES, ROLES_ANTIGUOS, DESTINOS_ASIGNADAS, ACCIONES, MATRIZ, esRolValido, puede, permisosDe, alcanceDe, describirRol, requierePermiso };

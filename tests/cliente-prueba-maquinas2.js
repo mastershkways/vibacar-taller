@@ -25,7 +25,7 @@ const RE_FLOTA = /^\d+$/; // F3.5-06: nº de flota numérico correlativo (sin F-
   const A = await login('admin_prueba', 'clave-prueba-123');
   const R = await login('responsable1', 'prueba123');
   const G = await login('gerencia1', 'prueba123');
-  const GS = await login('gestorsat1', 'prueba123');
+  const GS = await login('operativo1', 'prueba123');
   const F = await login('finanzas1', 'prueba123');
   const T = await login('tecnico1', 'prueba123');
 
@@ -37,12 +37,12 @@ const RE_FLOTA = /^\d+$/; // F3.5-06: nº de flota numérico correlativo (sin F-
   x = await pedir('/api/sesion', { cookie: G });
   ok('gerencia: solo lectura (5 permisos de ver)', x.j.usuario.rol === 'gerencia' && JSON.stringify([...x.j.permisos].sort()) === JSON.stringify(['clientes.ver', 'informes.ver', 'kanban.ver', 'maquinas.ver', 'ot.ver']), JSON.stringify(x.j.permisos));
   x = await pedir('/api/sesion', { cookie: GS });
-  ok('gestor_sat: alcance sat, con asignar/aprobar y sin maestros', x.j.usuario.rol === 'gestor_sat' && x.j.alcance === 'sat' && x.j.permisos.includes('ot.aprobar_asignacion') && !x.j.permisos.includes('clientes.gestionar'));
+  ok('operativo (antes gestor_sat): alcance operativo, con asignar/aprobar/cerrar y sin maestros', x.j.usuario.rol === 'operativo' && x.j.alcance === 'operativo' && x.j.permisos.includes('ot.aprobar_asignacion') && x.j.permisos.includes('ot.cerrar') && !x.j.permisos.includes('clientes.gestionar'));
   x = await pedir('/api/sesion', { cookie: F });
   ok('finanzas1 (antes financiero) → administrativo', x.j.usuario.rol === 'administrativo');
   x = await pedir('/api/usuarios', { cookie: A });
-  ok('GET /usuarios → 9 roles, ninguno antiguo', x.s === 200 && x.j.roles.length === 9 && !x.j.roles.some((r) => /admontaller|financiero/.test(r.codigo)), x.j.roles.map((r) => r.codigo).join(','));
-  for (const [c, nombre] of [[R, 'responsable_st'], [G, 'gerencia'], [GS, 'gestor_sat']]) {
+  ok('GET /usuarios → 9 roles, ninguno antiguo', x.s === 200 && x.j.roles.length === 9 && !x.j.roles.some((r) => /admontaller|financiero|gestor_sat/.test(r.codigo)), x.j.roles.map((r) => r.codigo).join(','));
+  for (const [c, nombre] of [[R, 'responsable_st'], [G, 'gerencia'], [GS, 'operativo']]) {
     x = await pedir('/api/usuarios', { cookie: c });
     ok(`${nombre}: GET /usuarios → 403`, x.s === 403, `${x.s}`);
   }
@@ -54,25 +54,25 @@ const RE_FLOTA = /^\d+$/; // F3.5-06: nº de flota numérico correlativo (sin F-
   ok('responsable_st: POST /clientes → 201', x.s === 201, x.t);
   const clienteResp = x.j;
   x = await pedir('/api/estados', { cookie: R });
-  ok('responsable_st: tiene transiciones (migradas de admontaller)', x.s === 200 && x.j.transiciones.length >= 10, `${x.j.transiciones.length}`);
+  ok('responsable_st: flujo libre con cierre y etiquetas (F4-04)', x.s === 200 && x.j.flujo.libre === true && x.j.flujo.puede_cerrar === true && x.j.etiquetas.length >= 11, JSON.stringify(x.j.flujo));
   x = await pedir('/api/estados', { cookie: G });
-  ok('gerencia: sin transiciones', x.s === 200 && x.j.transiciones.length === 0, `${x.j.transiciones.length}`);
-  // gestor_sat: alcance = O.T. de SAT o sin técnico
+  ok('gerencia: no puede cerrar', x.s === 200 && x.j.flujo.puede_cerrar === false);
+  // operativo: alcance = O.T. que abrió él, de SAT o sin técnico (en el seed todas las abre el admin)
   x = await pedir('/api/ot?abiertas=0&limite=100', { cookie: A });
   const todasOT = x.j.ots;
   x = await pedir('/api/tecnicos', { cookie: A });
   const satIds = new Set(x.j.filter((t) => t.rol === 'sat').map((t) => t.id));
   const esperadas = todasOT.filter((o) => o.tecnico_id === null || satIds.has(o.tecnico_id));
   x = await pedir('/api/ot?abiertas=0&limite=100', { cookie: GS });
-  ok(`gestor_sat: GET /ot → solo O.T. de SAT o sin técnico (${esperadas.length} de ${todasOT.length})`, x.s === 200 && x.j.total === esperadas.length && x.j.ots.every((o) => o.tecnico_id === null || satIds.has(o.tecnico_id)), `total=${x.j.total}`);
+  ok(`operativo: GET /ot → solo O.T. de SAT o sin técnico (${esperadas.length} de ${todasOT.length})`, x.s === 200 && x.j.total === esperadas.length && x.j.ots.every((o) => o.tecnico_id === null || satIds.has(o.tecnico_id)), `total=${x.j.total}`);
   const otTecnico = todasOT.find((o) => o.tecnico_id && !satIds.has(o.tecnico_id));
   x = await pedir(`/api/ot/${otTecnico.id}`, { cookie: GS });
-  ok('gestor_sat: O.T. de un técnico interno → 404', x.s === 404, `${x.s}`);
+  ok('operativo: O.T. de un técnico interno → 404', x.s === 404, `${x.s}`);
   const otSat = todasOT.find((o) => satIds.has(o.tecnico_id));
   x = await pedir(`/api/ot/${otSat.id}`, { cookie: GS });
-  ok('gestor_sat: O.T. de un SAT → 200', x.s === 200, `${x.s}`);
+  ok('operativo: O.T. de un SAT → 200', x.s === 200, `${x.s}`);
   x = await pedir('/api/kanban', { cookie: GS });
-  ok('gestor_sat: Kanban solo con sus O.T.', x.s === 200 && x.j.fases.flatMap((f) => f.ots).every((o) => o.tecnico_id === null || satIds.has(o.tecnico_id)));
+  ok('operativo: Tablero solo con sus O.T.', x.s === 200 && x.j.fases.flatMap((f) => f.ots).every((o) => o.tecnico_id === null || satIds.has(o.tecnico_id)));
 
   // --- Máquinas v2 ------------------------------------------------------------------------------------
   x = await pedir('/api/maquinas', { cookie: A });

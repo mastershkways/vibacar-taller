@@ -1,32 +1,38 @@
 // rutas-ot.js — API de Órdenes de Trabajo: listado con alcance, alta, edición con bloqueo
-// optimista, cambio de estado validado por transiciones, historial, asignaciones y Kanban.
+// optimista, cambio de estado (flujo libre con confirmación), etiquetas, historial, asignaciones y Tablero.
 //
 // Reglas que se aplican SIEMPRE en el servidor:
-//   - alcance del rol (permisos.js): técnico/SAT solo ven sus O.T.; comercial, las de los clientes de su cartera (clientes.comercial_id).
-//   - cada cambio de estado pasa por la tabla `transiciones` (origen, destino, rol) y escribe en `ot_historial`.
+//   - alcance del rol (permisos.js): técnico/SAT solo ven sus O.T.; comercial, las de los clientes de su cartera
+//     (clientes.comercial_id); operativo, las que abrió él, las de SAT externos y las que aún no tienen técnico.
+//   - F4-04 (2026-11-10): cualquier estado → cualquier estado (la confirmación la pone la interfaz). Límites: técnico y SAT solo
+//     a en curso / pausada / finalizada; entrar o salir de un estado final (cerrada) exige `ot.cerrar`. La etiqueta pertenece
+//     a un estado: al cambiar de estado se pone la que venga (validada) o ninguna. Todo cambio escribe en `ot_historial`.
 //   - cualquier UPDATE sobre `ot` incrementa `version`; el PUT exige la version que vio el cliente (409 si no coincide).
 
 const express = require('express');
 const crypto = require('crypto');
 const { db, ahora } = require('./db');
 const { siguienteNumeroOT, leerMaximoKarve } = require('./numeracion');
-const { requierePermiso, puede, alcanceDe } = require('./permisos');
+const { requierePermiso, puede, alcanceDe, DESTINOS_ASIGNADAS } = require('./permisos');
 const { ErrorHttp, texto, entero, enumerado, idRuta } = require('./validar');
 
 const TIPOS = ['correctivo', 'preventivo'];
 const ORIGENES = ['manual', 'whatsapp', 'correo', 'auto', 'karve'];   // karve = importada de Karve (F3.6-01)
 const LIMITE_DEFECTO = 200;
 const LIMITE_MAX = 1000;
+const DIAS_CERRADAS_DEFECTO = 0;   // F4-04: las cerradas desaparecen del Tablero (gerencia 2026-11-06); ?cerradas=N las enseña N días
+const DIAS_CERRADAS_MAX = 90;
 
 // ---------------------------------------------------------------------------
 // Consultas base
 // ---------------------------------------------------------------------------
 const SELECT_OT = `
   SELECT o.*,
-         c.nombre AS cliente_nombre, c.exige_pedido,
+         c.nombre AS cliente_nombre, c.exige_pedido, c.zona AS cliente_zona,
          m.marca AS maquina_marca, m.modelo AS maquina_modelo, m.bastidor AS maquina_bastidor, m.num_flota AS maquina_flota,
          e.nombre AS estado_nombre, e.fase, e.color AS estado_color, e.es_final,
          f.nombre AS fase_nombre, f.orden AS fase_orden, f.abierta AS fase_abierta,
+         et.nombre AS etiqueta_nombre, et.color AS etiqueta_color,
          t.nombre AS tecnico_nombre,
          u.nombre AS creado_por_nombre
     FROM ot o
@@ -34,20 +40,17 @@ const SELECT_OT = `
     LEFT JOIN maquinas m ON m.id = o.maquina_id
     JOIN estados e ON e.codigo = o.estado
     JOIN fases f ON f.codigo = e.fase
+    LEFT JOIN etiquetas et ON et.codigo = o.etiqueta
     LEFT JOIN usuarios t ON t.id = o.tecnico_id
     LEFT JOIN usuarios u ON u.id = o.creado_por`;
 
 const stmt = {
   estado: db.prepare('SELECT e.*, f.abierta AS fase_abierta FROM estados e JOIN fases f ON f.codigo = e.fase WHERE e.codigo = ? AND e.activo = 1'),
   estadoInicial: db.prepare('SELECT e.* FROM estados e JOIN fases f ON f.codigo = e.fase WHERE e.es_inicial = 1 AND e.activo = 1 ORDER BY f.orden, e.orden LIMIT 1'),
-  transicion: db.prepare(`SELECT 1 FROM transiciones WHERE origen = ? AND destino = ? AND rol IN (?, '*') LIMIT 1`),
-  destinos: db.prepare(`
-    SELECT DISTINCT t.destino AS codigo, e.nombre, e.fase, e.color
-      FROM transiciones t JOIN estados e ON e.codigo = t.destino JOIN fases f ON f.codigo = e.fase
-     WHERE t.origen = ? AND t.rol IN (?, '*') AND e.activo = 1
-     ORDER BY f.orden, e.orden`),
-  otBloqueo: db.prepare('SELECT o.id, o.estado, o.version, o.tecnico_id, e.es_final FROM ot o JOIN estados e ON e.codigo = o.estado WHERE o.id = ?'),
-  cambiarEstado: db.prepare('UPDATE ot SET estado = ?, version = version + 1, actualizado = ? WHERE id = ? AND version = ?'),
+  estadosActivos: db.prepare('SELECT e.codigo, e.nombre, e.fase, e.color, e.es_final FROM estados e JOIN fases f ON f.codigo = e.fase WHERE e.activo = 1 ORDER BY f.orden, e.orden'),
+  etiqueta: db.prepare('SELECT codigo, nombre, estado FROM etiquetas WHERE codigo = ? AND activo = 1'),
+  otBloqueo: db.prepare('SELECT o.id, o.estado, o.etiqueta, o.version, o.tecnico_id, e.es_final FROM ot o JOIN estados e ON e.codigo = o.estado WHERE o.id = ?'),
+  cambiarEstado: db.prepare('UPDATE ot SET estado = ?, etiqueta = ?, version = version + 1, actualizado = ? WHERE id = ? AND version = ?'),
   historial: db.prepare('INSERT INTO ot_historial (ot_id, estado_anterior, estado_nuevo, usuario_id, fecha, nota) VALUES (?, ?, ?, ?, ?, ?)'),
   leerHistorial: db.prepare(`
     SELECT h.id, h.estado_anterior, ea.nombre AS estado_anterior_nombre, h.estado_nuevo, en.nombre AS estado_nuevo_nombre,
@@ -64,6 +67,10 @@ const stmt = {
       LEFT JOIN usuarios p ON p.id = a.propuesto_por
       LEFT JOIN usuarios r ON r.id = a.resuelto_por
      WHERE a.ot_id = ? ORDER BY a.id DESC`),
+  leerBloques: db.prepare(`
+    SELECT b.*, t.nombre AS tecnico_nombre
+      FROM ot_bloques b JOIN usuarios t ON t.id = b.tecnico_id
+     WHERE b.ot_id = ? ORDER BY b.dia, b.hora_inicio, b.orden`),
   asignacionPendiente: db.prepare(`SELECT id FROM ot_asignaciones WHERE ot_id = ? AND estado = 'propuesta' LIMIT 1`),
   asignacion: db.prepare('SELECT * FROM ot_asignaciones WHERE id = ? AND ot_id = ?'),
   tecnico: db.prepare(`SELECT id, nombre, rol FROM usuarios WHERE id = ? AND activo = 1 AND rol IN ('tecnico', 'sat')`),
@@ -81,9 +88,9 @@ function filtroAlcance(req) {
     case 'clientes_propios':
       // F2-05: el comercial solo ve las O.T. de los clientes de su cartera (clientes.comercial_id = él).
       return { sql: ' AND o.cliente_id IN (SELECT id FROM clientes WHERE comercial_id = ?)', params: [req.usuario.id] };
-    case 'sat':
-      // F3-05: el gestor de SAT ve las O.T. de SAT externos y las que aún no tienen técnico (para asignárselas).
-      return { sql: " AND (o.tecnico_id IS NULL OR o.tecnico_id IN (SELECT id FROM usuarios WHERE rol = 'sat'))", params: [] };
+    case 'operativo':
+      // F4-12: el operativo administrativo ve las O.T. que abrió él, las de SAT externos y las que aún no tienen técnico.
+      return { sql: " AND (o.creado_por = ? OR o.tecnico_id IS NULL OR o.tecnico_id IN (SELECT id FROM usuarios WHERE rol = 'sat'))", params: [req.usuario.id] };
     default:
       return { sql: '', params: [] };
   }
@@ -97,38 +104,69 @@ function cargarOT(req, id) {
   return ot;
 }
 
+// F4-04: estados a los que este usuario puede llevar la O.T. (flujo libre con los dos límites de arriba).
+function destinosPara(usuario, ot) {
+  if (!puede(usuario.rol, 'ot.cambiar_estado')) return [];
+  const asignadas = alcanceDe(usuario.rol) === 'asignadas';
+  const puedeCerrar = puede(usuario.rol, 'ot.cerrar');
+  if (ot.es_final && !puedeCerrar) return [];
+  return stmt.estadosActivos.all().filter((e) => e.codigo !== ot.estado && (!asignadas || DESTINOS_ASIGNADAS.includes(e.codigo)) && (!e.es_final || puedeCerrar));
+}
+
 function detalleOT(req, id) {
   const ot = cargarOT(req, id);
   return {
     ...ot,
     historial: stmt.leerHistorial.all(id),
     asignaciones: stmt.leerAsignaciones.all(id),
-    transiciones: puede(req.usuario.rol, 'ot.cambiar_estado') ? stmt.destinos.all(ot.estado, req.usuario.rol) : [],
+    bloques: stmt.leerBloques.all(id),
+    destinos: destinosPara(req.usuario, ot),
   };
+}
+
+// Comprueba que una etiqueta existe y pertenece al estado dado. Devuelve el registro (o null si viene vacía).
+function comprobarEtiqueta(codigo, estado) {
+  if (codigo === null || codigo === undefined || codigo === '') return null;
+  const et = stmt.etiqueta.get(String(codigo));
+  if (!et) throw new ErrorHttp(400, `La etiqueta "${codigo}" no existe`);
+  if (et.estado !== estado) throw new ErrorHttp(400, `La etiqueta "${et.nombre}" no es de la vertical "${estado}"`, { etiqueta: et.codigo, estado: et.estado });
+  return et;
 }
 
 // ---------------------------------------------------------------------------
 // Cambio de estado (se usa desde /estado y desde la aprobación de asignación).
-// Debe ejecutarse dentro de una transacción. Valida transición y versión, escribe historial.
+// Debe ejecutarse dentro de una transacción. Valida permisos del flujo libre y versión, escribe historial.
 // ---------------------------------------------------------------------------
-function aplicarCambioEstado({ otId, destino, usuario, nota = null, versionEsperada = null }) {
+function aplicarCambioEstado({ otId, destino, etiqueta = null, tecnicoId = undefined, usuario, nota = null, versionEsperada = null }) {
   const actual = stmt.otBloqueo.get(otId);
   if (!actual) throw new ErrorHttp(404, 'O.T. no encontrada');
   if (versionEsperada !== null && actual.version !== versionEsperada) {
     throw new ErrorHttp(409, 'La O.T. ha sido modificada por otro usuario. Recarga y vuelve a intentarlo.', { version: actual.version });
   }
-  if (actual.es_final) throw new ErrorHttp(400, 'La O.T. está en un estado final y no admite cambios');
   if (actual.estado === destino) throw new ErrorHttp(400, 'La O.T. ya está en ese estado');
   const nuevo = stmt.estado.get(destino);
   if (!nuevo) throw new ErrorHttp(400, `El estado "${destino}" no existe`);
-  if (!stmt.transicion.get(actual.estado, destino, usuario.rol)) {
-    throw new ErrorHttp(403, `Tu rol no puede pasar la O.T. de "${actual.estado}" a "${destino}"`, { desde: actual.estado, hasta: destino });
+  const puedeCerrar = puede(usuario.rol, 'ot.cerrar');
+  if (actual.es_final && !puedeCerrar) throw new ErrorHttp(403, 'La O.T. está cerrada: solo quien puede cerrar puede reabrirla', { desde: actual.estado, hasta: destino });
+  if (nuevo.es_final && !puedeCerrar) throw new ErrorHttp(403, 'Tu rol no puede cerrar una O.T.', { desde: actual.estado, hasta: destino });
+  if (alcanceDe(usuario.rol) === 'asignadas' && !DESTINOS_ASIGNADAS.includes(destino)) {
+    throw new ErrorHttp(403, `Tu rol solo puede pasar la O.T. a: ${DESTINOS_ASIGNADAS.join(', ')}`, { desde: actual.estado, hasta: destino });
   }
-  const r = stmt.cambiarEstado.run(destino, ahora(), otId, actual.version);
+  const et = comprobarEtiqueta(etiqueta, destino);
+  let tecnico = null;
+  if (tecnicoId !== undefined && tecnicoId !== null) {
+    tecnico = stmt.tecnico.get(tecnicoId);
+    if (!tecnico) throw new ErrorHttp(400, 'El técnico no existe, no está activo o no tiene rol técnico/SAT');
+  }
+  const r = stmt.cambiarEstado.run(destino, et ? et.codigo : null, ahora(), otId, actual.version);
   if (r.changes === 0) throw new ErrorHttp(409, 'La O.T. ha sido modificada por otro usuario. Recarga y vuelve a intentarlo.');
-  if (nuevo.es_final) db.prepare('UPDATE ot SET fecha_cierre = ? WHERE id = ?').run(ahora(), otId); // F3.6-02: fecha de cierre para la columna de cerradas recientes
-  stmt.historial.run(otId, actual.estado, destino, usuario.id, ahora(), nota);
-  return { anterior: actual.estado, nuevo: destino };
+  if (tecnico) db.prepare('UPDATE ot SET tecnico_id = ? WHERE id = ?').run(tecnico.id, otId);
+  // F3.6-02: fecha de cierre al entrar en un estado final; se limpia al reabrir.
+  if (nuevo.es_final) db.prepare('UPDATE ot SET fecha_cierre = ? WHERE id = ?').run(ahora(), otId);
+  else if (actual.es_final) db.prepare('UPDATE ot SET fecha_cierre = NULL WHERE id = ?').run(otId);
+  const partes = [et ? `[${et.nombre}]` : null, tecnico ? `Técnico: ${tecnico.nombre}` : null, nota].filter(Boolean);
+  stmt.historial.run(otId, actual.estado, destino, usuario.id, ahora(), partes.join(' · ') || null);
+  return { anterior: actual.estado, nuevo: destino, etiqueta: et ? et.codigo : null };
 }
 
 // ---------------------------------------------------------------------------
@@ -159,6 +197,11 @@ function leerCamposOT(body, parcial) {
   if (body.sintoma !== undefined) campos.sintoma = texto(body.sintoma, { nombre: 'sintoma', max: 200 });
   if (body.descripcion !== undefined) campos.descripcion = texto(body.descripcion, { nombre: 'descripcion', max: 4000 });
   if (body.notas_internas !== undefined) campos.notas_internas = texto(body.notas_internas, { nombre: 'notas_internas', max: 4000 });
+  if (body.fecha_prevista !== undefined) {
+    const fp = texto(body.fecha_prevista, { nombre: 'fecha_prevista', max: 10 });
+    if (fp !== null && !/^\d{4}-\d{2}-\d{2}$/.test(fp)) throw new ErrorHttp(400, 'fecha_prevista debe ser AAAA-MM-DD');
+    campos.fecha_prevista = fp;
+  }
   const prioridad = entero(body.prioridad, { nombre: 'prioridad', min: 1, max: 3 });
   if (prioridad !== null) campos.prioridad = prioridad;
   return campos;
@@ -183,8 +226,9 @@ const resolverAsignacion = db.transaction(({ ot, asignacion, usuario, aprobar, n
     .run(tecnico.id, ahora(), ot.id, ot.version);
   if (r.changes === 0) throw new ErrorHttp(409, 'La O.T. ha sido modificada por otro usuario. Recarga y vuelve a intentarlo.');
   const notaHist = `Técnico asignado: ${tecnico.nombre}`;
-  if (ot.estado !== 'asignada' && stmt.transicion.get(ot.estado, 'asignada', usuario.rol)) {
-    aplicarCambioEstado({ otId: ot.id, destino: 'asignada', usuario, nota: notaHist });
+  // F4-04: asignar técnico a una O.T. pendiente de planificar la pasa a planificada; en otro estado solo se anota.
+  if (ot.estado === 'pendiente_planificar' && puede(usuario.rol, 'ot.cambiar_estado')) {
+    aplicarCambioEstado({ otId: ot.id, destino: 'planificada', usuario, nota: notaHist });
   } else {
     stmt.historial.run(ot.id, ot.estado, ot.estado, usuario.id, ahora(), `${notaHist} (sin cambio de estado)`);
   }
@@ -203,6 +247,8 @@ module.exports = function montarRutasOT(app) {
     const p = [];
     const fase = texto(req.query.fase, { nombre: 'fase', max: 50 });
     const estado = texto(req.query.estado, { nombre: 'estado', max: 50 });
+    const etiqueta = texto(req.query.etiqueta, { nombre: 'etiqueta', max: 50 });
+    const zona = texto(req.query.zona, { nombre: 'zona', max: 50 });
     const tecnicoId = entero(req.query.tecnico_id, { nombre: 'tecnico_id', min: 1 });
     const clienteId = entero(req.query.cliente_id, { nombre: 'cliente_id', min: 1 });
     const prioridad = entero(req.query.prioridad, { nombre: 'prioridad', min: 1, max: 3 });
@@ -214,6 +260,8 @@ module.exports = function montarRutasOT(app) {
     if (abiertas === '1') where.push('f.abierta = 1');
     if (fase) { where.push('e.fase = ?'); p.push(fase); }
     if (estado) { where.push('o.estado = ?'); p.push(estado); }
+    if (etiqueta) { where.push(etiqueta === '-' ? 'o.etiqueta IS NULL' : 'o.etiqueta = ?'); if (etiqueta !== '-') p.push(etiqueta); }
+    if (zona) { where.push('c.zona = ?'); p.push(zona); }
     if (tecnicoId) { where.push('o.tecnico_id = ?'); p.push(tecnicoId); }
     if (clienteId) { where.push('o.cliente_id = ?'); p.push(clienteId); }
     if (prioridad) { where.push('o.prioridad = ?'); p.push(prioridad); }
@@ -226,24 +274,26 @@ module.exports = function montarRutasOT(app) {
     res.json({ total, pagina, limite, ots });
   });
 
-  // Kanban: O.T. vivas agrupadas por fase. Pensado para polling: ETag y 304 si nada cambió.
-  // F3.6-02: las fases cerradas solo enseñan las O.T. cerradas en los últimos `cerradas` días (7 por defecto, 0 = ninguna,
-  // máximo 90) para que la columna no acumule miles de tarjetas; el histórico completo está en GET /ot?abiertas=0, paginado.
+  // Tablero: O.T. vivas agrupadas por vertical (fase). Pensado para polling: ETag y 304 si nada cambió.
+  // F4-04: las cerradas no se muestran (0 días por defecto); con ?cerradas=N (máx. 90) aparece la columna con las cerradas
+  // en esos días. Urgentes arriba (prioridad) y, dentro, las de fecha prevista más próxima. El histórico completo está en
+  // GET /ot?abiertas=0, paginado. Los filtros (operario, zona, etiqueta, texto) los aplica la interfaz sobre estos datos.
   r.get('/kanban', requierePermiso('kanban.ver'), (req, res) => {
     const f = filtroAlcance(req);
-    const dias = Math.min(entero(req.query.cerradas, { nombre: 'cerradas', min: 0 }) ?? 7, 90);
+    const dias = Math.min(entero(req.query.cerradas, { nombre: 'cerradas', min: 0 }) ?? DIAS_CERRADAS_DEFECTO, DIAS_CERRADAS_MAX);
     const vivasOCerradasRecientes = dias > 0 ? `(fa.abierta = 1 OR COALESCE(o.fecha_cierre, o.actualizado, o.creado) >= date('now', 'localtime', ?))` : 'fa.abierta = 1';
     const pCerradas = dias > 0 ? [`-${dias} days`] : [];
     const base = `FROM ot o JOIN estados e ON e.codigo = o.estado JOIN fases fa ON fa.codigo = e.fase WHERE ${vivasOCerradasRecientes} AND e.activo = 1${f.sql}`;
     const firma = db.prepare(`SELECT COUNT(*) AS n, COALESCE(SUM(o.version), 0) AS v, COALESCE(MAX(COALESCE(o.actualizado, o.creado)), '') AS m ${base}`).get(...pCerradas, ...f.params);
-    const etag = `"${crypto.createHash('sha1').update(`${firma.n}|${firma.v}|${firma.m}|${req.usuario.rol}|${req.usuario.id}|${dias}`).digest('hex').slice(0, 20)}"`;
+    const etag = `"${crypto.createHash('sha1').update(`v2|${firma.n}|${firma.v}|${firma.m}|${req.usuario.rol}|${req.usuario.id}|${dias}`).digest('hex').slice(0, 20)}"`;
     if (req.headers['if-none-match'] === etag) return res.status(304).end();
 
     const fases = db.prepare('SELECT codigo, nombre, orden, abierta FROM fases WHERE abierta = 1 OR ? > 0 ORDER BY orden').all(dias);
     const filas = db.prepare(`
       SELECT o.id, o.numero, o.estado, e.nombre AS estado_nombre, e.color AS estado_color, e.fase,
-             o.prioridad, o.tipo, o.origen, o.sintoma, o.version, o.creado, o.actualizado,
-             o.cliente_id, c.nombre AS cliente_nombre,
+             o.etiqueta, et.nombre AS etiqueta_nombre, et.color AS etiqueta_color,
+             o.prioridad, o.tipo, o.origen, o.sintoma, o.version, o.creado, o.actualizado, o.fecha_prevista,
+             o.cliente_id, c.nombre AS cliente_nombre, c.zona AS cliente_zona,
              o.maquina_id, m.marca AS maquina_marca, m.modelo AS maquina_modelo, m.num_flota AS maquina_flota,
              o.tecnico_id, t.nombre AS tecnico_nombre,
              o.karve_estado, o.karve_operario, o.fecha_cierre
@@ -251,10 +301,11 @@ module.exports = function montarRutasOT(app) {
         JOIN estados e ON e.codigo = o.estado
         JOIN fases fa ON fa.codigo = e.fase
         JOIN clientes c ON c.id = o.cliente_id
+        LEFT JOIN etiquetas et ON et.codigo = o.etiqueta
         LEFT JOIN maquinas m ON m.id = o.maquina_id
         LEFT JOIN usuarios t ON t.id = o.tecnico_id
        WHERE ${vivasOCerradasRecientes} AND e.activo = 1${f.sql}
-       ORDER BY o.prioridad, COALESCE(o.actualizado, o.creado) DESC, o.id DESC`).all(...pCerradas, ...f.params);
+       ORDER BY o.prioridad, COALESCE(o.fecha_prevista, '9999') , COALESCE(o.actualizado, o.creado) DESC, o.id DESC`).all(...pCerradas, ...f.params);
     const porFase = Object.fromEntries(fases.map((fa) => [fa.codigo, []]));
     for (const fila of filas) (porFase[fila.fase] || (porFase[fila.fase] = [])).push(fila);
     res.set('ETag', etag);
@@ -295,17 +346,17 @@ module.exports = function montarRutasOT(app) {
     const crear = db.transaction(() => {
       const num = siguienteNumeroOT({ minimo: maximoKarve });
       const info = db.prepare(`
-        INSERT INTO ot (numero, anio, secuencia, cliente_id, maquina_id, estado, prioridad, tipo, origen, sintoma, descripcion, notas_internas, creado_por, creado)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+        INSERT INTO ot (numero, anio, secuencia, cliente_id, maquina_id, estado, prioridad, tipo, origen, sintoma, descripcion, notas_internas, fecha_prevista, creado_por, creado)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
         .run(num.numero, num.anio, num.secuencia, campos.cliente_id, campos.maquina_id ?? null, estado.codigo, prioridad,
-          campos.tipo, campos.origen, campos.sintoma ?? null, campos.descripcion ?? null, campos.notas_internas ?? null, req.usuario.id, ahora());
+          campos.tipo, campos.origen, campos.sintoma ?? null, campos.descripcion ?? null, campos.notas_internas ?? null, campos.fecha_prevista ?? null, req.usuario.id, ahora());
       stmt.historial.run(info.lastInsertRowid, null, estado.codigo, req.usuario.id, ahora(), 'Apertura de la O.T.');
       return info.lastInsertRowid;
     });
     return crear.immediate();
   }
 
-  // Detalle: O.T. + historial + asignaciones + transiciones posibles para el rol.
+  // Detalle: O.T. + historial + asignaciones + bloques + destinos posibles para el rol.
   r.get('/ot/:id', requierePermiso('ot.ver'), (req, res) => {
     res.json(detalleOT(req, idRuta(req.params.id)));
   });
@@ -317,13 +368,22 @@ module.exports = function montarRutasOT(app) {
   });
 
   // Edición con bloqueo optimista: `version` obligatoria; 409 si otro usuario la cambió.
-  r.put('/ot/:id', requierePermiso('ot.editar'), (req, res) => {
+  // `etiqueta` (F4-01) se puede cambiar aquí dentro de la misma vertical (null = quitarla); el cambio queda en el historial.
+  r.put('/ot/:id', requierePermiso('ot.editar', 'ot.cambiar_estado'), (req, res) => {
     const id = idRuta(req.params.id);
     const b = req.body || {};
     const version = entero(b.version, { nombre: 'version', obligatorio: true, min: 1 });
     const ot = cargarOT(req, id);
     if (ot.es_final) throw new ErrorHttp(400, 'La O.T. está en un estado final y no admite cambios');
-    const campos = leerCamposOT(b, true);
+    const soloEtiqueta = !puede(req.usuario.rol, 'ot.editar');
+    const campos = soloEtiqueta ? {} : leerCamposOT(b, true);
+    if (soloEtiqueta && Object.keys(b).some((k) => !['version', 'etiqueta'].includes(k))) throw new ErrorHttp(403, 'Tu rol solo puede cambiar la etiqueta de la O.T.');
+    let nuevaEtiqueta;
+    if (b.etiqueta !== undefined) {
+      const et = comprobarEtiqueta(b.etiqueta, ot.estado);
+      nuevaEtiqueta = et ? et.codigo : null;
+      if (nuevaEtiqueta !== (ot.etiqueta ?? null)) campos.etiqueta = nuevaEtiqueta;
+    }
     const clienteFinal = campos.cliente_id ?? ot.cliente_id;
     const maquinaFinal = campos.maquina_id === undefined ? ot.maquina_id : campos.maquina_id;
     if (maquinaFinal) {
@@ -334,24 +394,33 @@ module.exports = function montarRutasOT(app) {
     const columnas = Object.keys(campos);
     if (!columnas.length) throw new ErrorHttp(400, 'No hay ningún campo que actualizar');
     const set = columnas.map((c) => `${c} = ?`).join(', ');
-    const r2 = db.prepare(`UPDATE ot SET ${set}, version = version + 1, actualizado = ? WHERE id = ? AND version = ?`)
-      .run(...columnas.map((c) => campos[c]), ahora(), id, version);
-    if (r2.changes === 0) {
-      const actual = stmt.otBloqueo.get(id);
-      throw new ErrorHttp(409, 'La O.T. ha sido modificada por otro usuario. Recarga y vuelve a intentarlo.', { version: actual ? actual.version : null });
-    }
+    const actualizar = db.transaction(() => {
+      const r2 = db.prepare(`UPDATE ot SET ${set}, version = version + 1, actualizado = ? WHERE id = ? AND version = ?`)
+        .run(...columnas.map((c) => campos[c]), ahora(), id, version);
+      if (r2.changes === 0) {
+        const actual = stmt.otBloqueo.get(id);
+        throw new ErrorHttp(409, 'La O.T. ha sido modificada por otro usuario. Recarga y vuelve a intentarlo.', { version: actual ? actual.version : null });
+      }
+      if (campos.etiqueta !== undefined) {
+        const nombre = campos.etiqueta ? stmt.etiqueta.get(campos.etiqueta).nombre : 'sin etiqueta';
+        stmt.historial.run(id, ot.estado, ot.estado, req.usuario.id, ahora(), `Etiqueta: ${nombre}`);
+      }
+    });
+    actualizar.immediate();
     res.json(detalleOT(req, id));
   });
 
-  // Cambio de estado.
+  // Cambio de estado (flujo libre). Body: { estado, etiqueta?, tecnico_id?, nota?, version? }.
   r.post('/ot/:id/estado', requierePermiso('ot.cambiar_estado'), (req, res) => {
     const id = idRuta(req.params.id);
     const b = req.body || {};
     const destino = texto(b.estado, { nombre: 'estado', obligatorio: true, max: 50 });
+    const etiqueta = texto(b.etiqueta, { nombre: 'etiqueta', max: 50 });
     const nota = texto(b.nota, { nombre: 'nota', max: 1000 });
     const version = entero(b.version, { nombre: 'version', min: 1 });
+    const tecnicoId = b.tecnico_id === undefined || b.tecnico_id === null || b.tecnico_id === '' ? undefined : entero(b.tecnico_id, { nombre: 'tecnico_id', min: 1 });
     cargarOT(req, id); // alcance
-    const cambio = db.transaction(() => aplicarCambioEstado({ otId: id, destino, usuario: req.usuario, nota, versionEsperada: version })).immediate();
+    const cambio = db.transaction(() => aplicarCambioEstado({ otId: id, destino, etiqueta, tecnicoId, usuario: req.usuario, nota, versionEsperada: version })).immediate();
     res.json({ cambio, ot: detalleOT(req, id) });
   });
 

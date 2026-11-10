@@ -144,14 +144,14 @@ const irMaquinas = async (p) => { await evaluar(p, `location.hash = 'maquinas'`)
   await escape(p);
   await sinModal(p);
 
-  // --- Gestor de SAT: Tablero solo con O.T. de SAT o sin técnico ------------------------------------------
+  // --- Operativo (antes gestor de SAT): Tablero solo con sus O.T., las de SAT o sin técnico ----------------
   await salir(p);
-  await entrar(p, 'gestorsat1', 'prueba123');
+  await entrar(p, 'operativo1', 'prueba123');
   await esperarHasta(p, `document.querySelectorAll('.tarjeta').length > 0`);
   const tarjetas = await evaluar(p, `[...document.querySelectorAll('.tarjeta')].map(t => t.textContent)`);
-  ok(`gestor_sat: Tablero con ${tarjetas.length} tarjetas, ninguna de un técnico interno (Mikel/Ane)`, tarjetas.length > 0 && tarjetas.length < 18 && !tarjetas.some((t) => /Mikel Etxeberria|Ane Zubiaurre/.test(t)), `${tarjetas.length}`);
-  ok('gestor_sat: cabecera "Gestor de SAT externos", sin Usuarios', (await evaluar(p, `document.querySelector('#usuario-rol').textContent`)) === 'Gestor de SAT externos' && !(await textosNav(p)).includes('Usuarios'));
-  await captura(p, '07-gestor-sat-tablero');
+  ok(`operativo: Tablero con ${tarjetas.length} tarjetas, ninguna de un técnico interno (Mikel/Ane)`, tarjetas.length > 0 && tarjetas.length < 18 && !tarjetas.some((t) => /Mikel Etxeberria|Ane Zubiaurre/.test(t)), `${tarjetas.length}`);
+  ok('operativo: cabecera "Operativo administrativo", sin Usuarios', (await evaluar(p, `document.querySelector('#usuario-rol').textContent`)) === 'Operativo administrativo' && !(await textosNav(p)).includes('Usuarios'));
+  await captura(p, '07-operativo-tablero');
 
   p.cerrar();
   console.log(res.join('\n'));

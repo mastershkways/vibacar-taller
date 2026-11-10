@@ -17,7 +17,7 @@ execFileSync('node', ['-e', `
   db.prepare("INSERT INTO clientes (nombre) VALUES ('Cliente viejo')").run();
   db.prepare("DELETE FROM contadores").run();
   db.prepare("INSERT INTO contadores (clave, valor) VALUES ('ot-2026', 20), ('ot-2025', 300)").run();
-  db.prepare("INSERT INTO ot (numero, anio, secuencia, cliente_id, estado, creado_por) VALUES ('2026-0019', 2026, 19, 1, 'abierta', 1), ('2026-0020', 2026, 20, 1, 'abierta', 1)").run();
+  db.prepare("INSERT INTO ot (numero, anio, secuencia, cliente_id, estado, creado_por) VALUES ('2026-0019', 2026, 19, 1, 'pendiente_planificar', 1), ('2026-0020', 2026, 20, 1, 'pendiente_planificar', 1)").run();
 `], { env: process.env, stdio: 'ignore' });
 
 const { db } = require('../db'); // migra
@@ -41,7 +41,7 @@ ok('fijarContador(200000) → próxima 0000200001', num.fijarContador(200000).pr
 ok('formato de 10 dígitos siempre', num.formatearNumero(7) === '0000000007' && num.formatearNumero(1234567890) === '1234567890');
 
 // 3) Seed --limpiar: purga total + 3 usuarios
-db.prepare("INSERT INTO ot (numero, anio, secuencia, cliente_id, estado, creado_por) VALUES ('0000107951', 2026, 107951, 1, 'abierta', 1)").run();
+db.prepare("INSERT INTO ot (numero, anio, secuencia, cliente_id, estado, creado_por) VALUES ('0000107951', 2026, 107951, 1, 'pendiente_planificar', 1)").run();
 db.close();
 const salida = execFileSync('node', [path.join(RAIZ, 'scripts', 'generar-datos-prueba.js'), '--limpiar'], { env: process.env, encoding: 'utf8' });
 const d2 = new Database(ruta, { readonly: true });

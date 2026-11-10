@@ -5,7 +5,7 @@
 
 const express = require('express');
 const { db, ahora, hashClave } = require('./db');
-const { requierePermiso, esRolValido, alcanceDe, ROLES } = require('./permisos');
+const { requierePermiso, esRolValido, alcanceDe, puede, ROLES, DESTINOS_ASIGNADAS } = require('./permisos');
 const { ErrorHttp, texto, entero, booleano, enumerado, idRuta } = require('./validar');
 const { siguienteNumeroFlota } = require('./numeracion');
 const karve = require('./karve');
@@ -247,17 +247,19 @@ module.exports = function montarRutasMaestros(app) {
   });
 
   // -------------------------------------------------------------------------
-  // Estados, fases y transiciones (las transiciones, filtradas por el rol del usuario)
+  // Estados (verticales), fases, etiquetas y reglas del flujo (F4-04: libre con confirmación; técnico/SAT a un subconjunto;
+  // los estados finales exigen ot.cerrar). `transiciones` se mantiene vacío por compatibilidad.
   // -------------------------------------------------------------------------
   r.get('/estados', requierePermiso('ot.ver'), (req, res) => {
     const fases = db.prepare('SELECT codigo, nombre, orden, abierta FROM fases ORDER BY orden').all();
     const estados = db.prepare(`
-      SELECT e.codigo, e.nombre, e.fase, e.orden, e.es_inicial, e.es_final, e.prioridad_defecto, e.color
+      SELECT e.codigo, e.nombre, e.fase, e.orden, e.es_inicial, e.es_final, e.prioridad_defecto, e.color, e.responsables
         FROM estados e JOIN fases f ON f.codigo = e.fase
        WHERE e.activo = 1
-       ORDER BY f.orden, e.orden, e.codigo`).all();
-    const transiciones = db.prepare(`SELECT DISTINCT origen, destino FROM transiciones WHERE rol IN (?, '*') ORDER BY origen, destino`).all(req.usuario.rol);
-    res.json({ fases, estados, transiciones });
+       ORDER BY f.orden, e.orden, e.codigo`).all().map((e) => ({ ...e, responsables: e.responsables ? e.responsables.split(',') : [] }));
+    const etiquetas = db.prepare('SELECT codigo, nombre, estado, orden, responsable, color FROM etiquetas WHERE activo = 1 ORDER BY estado, orden').all();
+    const flujo = { libre: true, destinos_asignadas: DESTINOS_ASIGNADAS, puede_cerrar: puede(req.usuario.rol, 'ot.cerrar') };
+    res.json({ fases, estados, etiquetas, flujo, transiciones: [] });
   });
 
   // -------------------------------------------------------------------------
@@ -266,7 +268,7 @@ module.exports = function montarRutasMaestros(app) {
   // ficha en Karve para imputar horas en la Fase 5. `origen` lo fijará la sincronización, no la API.
   // Baja lógica con `activo`: el login (auth.js) solo admite activos y al desactivar se expulsan sus sesiones.
   // -------------------------------------------------------------------------
-  r.get('/tecnicos', requierePermiso('ot.asignar', 'ot.aprobar_asignacion'), (req, res) => {
+  r.get('/tecnicos', requierePermiso('ot.asignar', 'ot.aprobar_asignacion', 'kanban.ver'), (req, res) => { // kanban.ver: filtro por operario del Tablero (F4-04)
     res.json(db.prepare(`SELECT id, nombre, rol FROM usuarios WHERE activo = 1 AND rol IN ('tecnico', 'sat') ORDER BY nombre COLLATE NOCASE`).all());
   });
 

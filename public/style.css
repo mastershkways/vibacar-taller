@@ -276,6 +276,24 @@ input.mayusculas { text-transform: uppercase; }
 .columna.destino-no .cuerpo { background: var(--error-fondo); outline: 2px dashed var(--error-borde); }
 .columna.cerradas h3 small { display: block; font-weight: 500; font-size: 11px; color: var(--texto-tenue); text-transform: none; letter-spacing: 0; } /* F3.6-02 */
 .columna.cerradas .tarjeta { opacity: .75; }
+/* F4-04: verticales + etiquetas. "Tu vertical" = la que limpia tu rol; urgentes arriba y marcadas. */
+.columna h3 .titulo-col { display: inline-flex; align-items: center; gap: 6px; min-width: 0; background: none; border: 0; padding: 0; }
+.columna.mia { border-color: var(--naranja-borde); box-shadow: inset 0 3px 0 var(--naranja); }
+.columna h3 small.mia-marca { background: var(--naranja-suave); color: var(--naranja-texto); border-radius: 999px; padding: 1px 7px; font-size: 10px; font-weight: 600; text-transform: none; letter-spacing: .02em; }
+.tarjeta.urgente { border-left-color: var(--error) !important; background: linear-gradient(90deg, var(--error-fondo) 0, var(--tarjeta) 56px); }
+.tarjeta .urgente-texto { color: var(--error); font-weight: 700; }
+.tarjeta .etiquetas { margin-top: 6px; display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }
+.tarjeta .cliente .zona { font-weight: 500; color: var(--texto-tenue); font-size: 12px; }
+.tarjeta .prevista { font-size: 12px; color: var(--texto-tenue); margin-top: 3px; }
+.chip-etiqueta { font-size: 11px; padding: 2px 9px; }
+.filtros-tablero { margin-bottom: 12px; }
+.filtros-tablero > div.al-final { min-width: 0; align-self: flex-end; }
+.pregunta { margin-top: 14px; }
+.pregunta label { font-weight: 600; }
+.etiqueta-inline { margin: 0; align-self: center; white-space: nowrap; }
+.modal-fondo.tablet .btn-grande { min-height: 56px; font-size: 18px; }
+.modal-fondo.tablet textarea, .modal-fondo.tablet select { min-height: 56px; font-size: 18px; }
+.modal-fondo.tablet textarea { min-height: 150px; }
 
 .tarjeta {
   background: var(--tarjeta); border-radius: 10px; padding: 12px 14px;

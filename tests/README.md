@@ -17,7 +17,9 @@ El lanzador ejecuta tres ciclos con base limpia (el de Karve solo si el `.env` t
 | clientes2 | seed | `cliente-prueba-clientes2.js` + `navegador-prueba-clientes2.js` | F3-02 menú Maestros, pantallas sin avisos ni chips; F3-03 clientes v2, contactos, regla de 3 años |
 | maquinas2 | seed | `cliente-prueba-maquinas2.js` + `navegador-prueba-maquinas2.js` + `navegador-colores.js` + `cliente-prueba-numeracion.js` | F3-04 máquinas v2, nº de flota, edición restringida; F3-05 roles y alcances; F3-01 colores; F3.5-05 numeración de O.T. con Karve |
 | karve | seed + Karve real | `cliente-prueba-karve.js` + `cliente-prueba-importar-ot.js` + `navegador-prueba-karve.js` | F3.5-03/04 sincronización de clientes, contactos y máquinas; F3.5-06 nº de flota y paginación; F3.6-01 importación de O.T. vivas; F3.6-02 cerradas recientes en el Kanban |
-| migración | sintética | `prueba-migracion-roles.js` | F3-05: `admontaller`/`financiero` → roles nuevos en usuarios y transiciones |
+| tablero2 / tablero2nav | seed (una base por arnés) | `cliente-prueba-tablero2.js` · `navegador-prueba-tablero2.js` | F4-01/F4-04: verticales + etiquetas, flujo libre con límites por rol, modal de dos preguntas, filtros, "tu vertical", cerradas fuera del Tablero, rol operativo |
+| migración | sintética | `prueba-migracion-roles.js` | F3-05/F4-12: `admontaller`/`financiero`/`gestor_sat` → roles nuevos en usuarios y transiciones |
+| migración Tablero | sintética | `prueba-migracion-tablero.js` | F4-04: los 10 estados antiguos → 5 verticales + etiquetas; O.T. recolocadas (también por `karve_estado`); historial legible |
 | numeración | sintética | `prueba-numeracion-y-limpiar.js` | F3.5-05: migración `AAAA-NNNN` → 10 dígitos, generador con mínimo de Karve, `fijar-contador`, purga `--limpiar` |
 
 Cada script imprime una línea por comprobación (`OK` / `FALLO`) y un resumen `n/m OK, k fallos`. Los de navegador también listan errores de consola y respuestas 4xx/5xx (las esperadas, como el 409 de un bastidor repetido, aparecen ahí).

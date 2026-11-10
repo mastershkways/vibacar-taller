@@ -1,4 +1,4 @@
-// Prueba de la importación de O.T. vivas desde Karve (F3.6-01) y del filtro de cerradas del Kanban (F3.6-02).
+// Prueba de la importación de O.T. vivas desde Karve (F3.6-01, mapeo a verticales + etiquetas desde F4-04) y de las cerradas del Tablero (F3.6-02 / F4-04: fuera por defecto).
 // Corre en el ciclo karve, después de cliente-prueba-karve.js (clientes y máquinas ya sincronizados en la misma base).
 // Lanza scripts/karve-importar-ot.js contra la misma RUTA_BD que el servidor (lectura real en la copia de Karve, ~10 s).
 const path = require('path');
@@ -39,18 +39,18 @@ const todasLasOT = (kanban) => kanban.fases.flatMap((f) => f.ots);
 (async () => {
   let x;
   const A = await login('admin_prueba', 'clave-prueba-123');
-  const GS = await login('gestorsat1', 'prueba123');
+  const OP = await login('operativo1', 'prueba123');
 
-  // Antes: el Kanban del seed ya tiene cerradas recientes (actualizado de estos días) → columna de cerradas solo con ellas
+  // Antes: por defecto el Tablero no enseña cerradas (F4-04); con ?cerradas=7 vuelve la columna solo con las de esos días
   x = await pedir('/api/kanban', { cookie: A });
   const antes = x.j;
-  const faseCerrada = antes.fases.find((f) => f.codigo === 'cerrada');
-  ok('Kanban: devuelve la fase cerrada con dias_cerradas = 7 y solo O.T. cerradas en los últimos 7 días', x.s === 200 && antes.dias_cerradas === 7 && faseCerrada && faseCerrada.abierta === 0 && faseCerrada.ots.length > 0 && faseCerrada.ots.every((o) => (o.fecha_cierre || o.actualizado || o.creado) >= hoyMenos(7)), `cerradas=${faseCerrada && faseCerrada.ots.length}`);
-  x = await pedir('/api/kanban?cerradas=0', { cookie: A });
-  ok('Kanban ?cerradas=0: sin fase cerrada y total solo abiertas', x.s === 200 && !x.j.fases.some((f) => f.codigo === 'cerrada') && x.j.total === antes.total - faseCerrada.ots.length, `total=${x.j.total}`);
+  ok('Tablero: por defecto dias_cerradas = 0 y sin fase cerrada', x.s === 200 && antes.dias_cerradas === 0 && !antes.fases.some((f) => f.codigo === 'cerrada') && antes.fases.length === 5, `fases=${antes.fases.map((f) => f.codigo).join(',')}`);
+  x = await pedir('/api/kanban?cerradas=7', { cookie: A });
+  const faseCerrada = x.j.fases.find((f) => f.codigo === 'cerrada');
+  ok('Tablero ?cerradas=7: fase cerrada con solo O.T. cerradas en los últimos 7 días', x.s === 200 && x.j.dias_cerradas === 7 && faseCerrada && faseCerrada.abierta === 0 && faseCerrada.ots.every((o) => (o.fecha_cierre || o.actualizado || o.creado) >= hoyMenos(7)), `cerradas=${faseCerrada && faseCerrada.ots.length}`);
   x = await pedir('/api/kanban?cerradas=200', { cookie: A });
-  ok('Kanban ?cerradas=200 → se recorta a 90 días', x.s === 200 && x.j.dias_cerradas === 90);
-  const seedAbiertas = antes.total - faseCerrada.ots.length;
+  ok('Tablero ?cerradas=200 → se recorta a 90 días', x.s === 200 && x.j.dias_cerradas === 90);
+  const seedAbiertas = antes.total;
 
   // Simulación: informa y no escribe
   let r = importar(['--simular', '--cerradas=20']);
@@ -62,50 +62,55 @@ const todasLasOT = (kanban) => kanban.fases.flatMap((f) => f.ots);
   // Importación real
   r = importar(['--cerradas=20']);
   ok(`importación: ≥ 800 vivas nuevas y 20 cerradas nuevas (${r.salida.split('\n')[1].trim()})`, r.vivas.nuevas >= 800 && r.cerradas.nuevas === 20 && r.vivas.conservadas === 0);
-  ok('informe: nuevas por estado local y sin estados desconocidos', /Nuevas por estado local: asignada \d+/.test(r.salida) && !/sin mapeo/.test(r.salida), r.salida.split('\n').filter((l) => /estado local|sin mapeo/.test(l)).join(' | '));
+  ok('informe: nuevas por estado local (planificada primero) y sin estados desconocidos', /Nuevas por estado local: planificada \d+/.test(r.salida) && /pausada:repuesto \d+/.test(r.salida) && !/sin mapeo/.test(r.salida), r.salida.split('\n').filter((l) => /estado local|sin mapeo/.test(l)).join(' | '));
   x = await pedir('/api/ot?abiertas=0&limite=1', { cookie: A });
   ok('el listado completo suma las importadas', x.s === 200 && x.j.total === totalAntes + r.vivas.nuevas + r.cerradas.nuevas, `total=${x.j.total}`);
 
   // Una O.T. viva concreta (HACER, 0000107949: 2026-10-02, cliente 0001604, máquina 0002186, operario TALLER)
   x = await pedir('/api/ot?abiertas=0&q=0000107949', { cookie: A });
   const o949 = x.j.ots[0];
-  ok('O.T. 0000107949 importada: estado asignada, origen karve, estado Karve HACER, operario TALLER, prevista 02/10/2026', x.s === 200 && x.j.total === 1 && o949.estado === 'asignada' && o949.origen === 'karve' && o949.karve_estado === 'HACER' && o949.karve_operario === 'TALLER' && o949.fecha_prevista === '2026-10-02' && o949.tecnico_id === null && o949.creado.startsWith('2026-10-02 '), JSON.stringify(o949 && { estado: o949.estado, karve_estado: o949.karve_estado, karve_operario: o949.karve_operario, creado: o949.creado }));
+  ok('O.T. 0000107949 importada: vertical planificada sin etiqueta, origen karve, estado Karve HACER, operario TALLER, prevista 02/10/2026', x.s === 200 && x.j.total === 1 && o949.estado === 'planificada' && o949.etiqueta === null && o949.origen === 'karve' && o949.karve_estado === 'HACER' && o949.karve_operario === 'TALLER' && o949.fecha_prevista === '2026-10-02' && o949.tecnico_id === null && o949.creado.startsWith('2026-10-02 '), JSON.stringify(o949 && { estado: o949.estado, karve_estado: o949.karve_estado, karve_operario: o949.karve_operario, creado: o949.creado }));
   ok('…con cliente y máquina de Karve enlazados y síntoma = avisos de Karve', o949 && o949.cliente_nombre && o949.maquina_id && /No arranca por las ma/.test(o949.sintoma || ''), o949 && `${o949.cliente_nombre} / máquina ${o949.maquina_flota} / ${o949.sintoma}`);
   x = await pedir(`/api/ot/${o949.id}`, { cookie: A });
   ok('detalle: historial con "Importada de Karve (HACER · TALLER)" y notas internas con la persona de contacto', x.s === 200 && x.j.historial.length === 1 && /Importada de Karve \(HACER · TALLER\)/.test(x.j.historial[0].nota) && /Persona de contacto: Xabier/.test(x.j.notas_internas || ''), JSON.stringify(x.j.historial && x.j.historial[0] && x.j.historial[0].nota));
 
-  // Mapeo de estados: recambios → pendiente_repuesto, PPTO → pausada, S.A.T. EXTERNO → en_curso sin técnico, PDTE Nº PEDIDO → pendiente_pedido, cerradas → cerrada con fecha_cierre
-  x = await pedir('/api/ot?abiertas=0&limite=1000&estado=pendiente_repuesto', { cookie: A });
+  // Mapeo de estados (F4-04): recambios → pausada/repuesto, PPTO → pausada/presupuesto u ok_presupuesto, S.A.T. EXTERNO → en_curso/sat_externo sin técnico,
+  // PDTE Nº PEDIDO → pausada/num_pedido, Vº B → finalizada/vb_factura, cerradas → cerrada con fecha_cierre
+  x = await pedir('/api/ot?abiertas=0&limite=1000&estado=pausada&etiqueta=repuesto', { cookie: A });
   const rep = x.j.ots.filter((o) => o.origen === 'karve');
-  ok('RECAMBIOS/ALMACEN/… → pendiente_repuesto (≥ 150)', rep.length >= 150 && rep.every((o) => /RECAMBIOS|REC\. URG\.|ALMACEN|PROVEEDOR|RE\. PEDIDO|RE\.PE\.URG|CONSULTADO REC\./.test(o.karve_estado)), `n=${rep.length}`);
-  x = await pedir('/api/ot?abiertas=0&limite=1000&estado=pausada', { cookie: A });
+  ok('RECAMBIOS/ALMACEN/… → pausada + etiqueta repuesto (≥ 150)', rep.length >= 150 && rep.every((o) => o.etiqueta === 'repuesto' && /RECAMBIOS|REC\. URG\.|ALMACEN|PROVEEDOR|RE\. PEDIDO|RE\.PE\.URG|CONSULTADO REC\./.test(o.karve_estado)), `n=${rep.length}`);
+  x = await pedir('/api/ot?abiertas=0&limite=1000&estado=pausada&etiqueta=presupuesto', { cookie: A });
   const pau = x.j.ots.filter((o) => o.origen === 'karve');
-  ok('PPTO/PDTE OK PPTO/PDTE. DICTAMEN → pausada (≥ 150)', pau.length >= 150 && pau.every((o) => /PPTO|DICTAMEN/.test(o.karve_estado)), `n=${pau.length}`);
-  x = await pedir('/api/ot?abiertas=0&limite=1000&estado=en_curso', { cookie: A });
+  x = await pedir('/api/ot?abiertas=0&limite=1000&estado=pausada&etiqueta=ok_presupuesto', { cookie: A });
+  const pauOk = x.j.ots.filter((o) => o.origen === 'karve');
+  ok('PPTO/PDTE. DICTAMEN → pausada/presupuesto y PDTE OK PPTO → pausada/ok_presupuesto (≥ 150 entre las dos)', pau.length + pauOk.length >= 150 && pau.every((o) => /PPTO|DICTAMEN/.test(o.karve_estado) && o.karve_estado !== 'PDTE OK PPTO') && pauOk.length > 0 && pauOk.every((o) => o.karve_estado === 'PDTE OK PPTO'), `n=${pau.length}+${pauOk.length}`);
+  x = await pedir('/api/ot?abiertas=0&limite=1000&estado=en_curso&etiqueta=sat_externo', { cookie: A });
   const sat = x.j.ots.filter((o) => o.origen === 'karve');
-  ok('S.A.T. EXTERNO → en_curso sin técnico local (≥ 15)', sat.length >= 15 && sat.every((o) => o.karve_estado === 'S.A.T. EXTERNO' && o.tecnico_id === null), `n=${sat.length}`);
-  x = await pedir('/api/ot?abiertas=0&limite=1000&estado=pendiente_pedido', { cookie: A });
+  ok('S.A.T. EXTERNO → en_curso/sat_externo sin técnico local (≥ 15)', sat.length >= 15 && sat.every((o) => o.karve_estado === 'S.A.T. EXTERNO' && o.tecnico_id === null), `n=${sat.length}`);
+  x = await pedir('/api/ot?abiertas=0&limite=1000&estado=pausada&etiqueta=num_pedido', { cookie: A });
   const ped = x.j.ots.filter((o) => o.origen === 'karve');
-  ok('PDTE Nº PEDIDO → pendiente_pedido (≥ 40)', ped.length >= 40 && ped.every((o) => o.karve_estado === 'PDTE Nº PEDIDO'), `n=${ped.length}`);
+  ok('PDTE Nº PEDIDO → pausada/num_pedido (≥ 40)', ped.length >= 40 && ped.every((o) => o.karve_estado === 'PDTE Nº PEDIDO'), `n=${ped.length}`);
+  x = await pedir('/api/ot?abiertas=0&limite=1000&estado=finalizada&etiqueta=vb_factura', { cookie: A });
+  const vbs = x.j.ots.filter((o) => o.origen === 'karve');
+  ok('Vº B FACT. / Vº B F. P. → finalizada/vb_factura (≥ 1)', vbs.length >= 1 && vbs.every((o) => /^Vº B/.test(o.karve_estado)), `n=${vbs.length}`);
   x = await pedir('/api/ot?abiertas=0&limite=1000&estado=cerrada', { cookie: A });
   const cer = x.j.ots.filter((o) => o.origen === 'karve');
   ok('cerradas de Karve: 20, con fecha_cierre y ordenadas de las más recientes', cer.length === 20 && cer.every((o) => /^\d{4}-\d{2}-\d{2}$/.test(o.fecha_cierre)) && cer.every((o) => o.fecha_cierre >= '2026-09-01'), `n=${cer.length} ${cer[0] && cer[0].fecha_cierre}`);
-  const urgentes = [...rep, ...pau].filter((o) => /URG/.test(o.karve_estado));
+  const urgentes = [...rep, ...pau, ...pauOk].filter((o) => /URG/.test(o.karve_estado));
   ok('estados "URG." → prioridad alta; el resto media', urgentes.length > 0 && urgentes.every((o) => o.prioridad === 1) && rep.filter((o) => !/URG/.test(o.karve_estado)).every((o) => o.prioridad === 2), `urgentes=${urgentes.length}`);
 
-  // Kanban: las vivas entran; las cerradas de Karve (octubre) no, porque son de hace más de 7 días; con ?cerradas=90 sí
+  // Tablero: las vivas entran con su etiqueta; las cerradas no se muestran; con ?cerradas=90 aparecen las 20 de Karve
   x = await pedir('/api/kanban', { cookie: A });
   const kb = x.j;
-  const vivasKb = todasLasOT(kb).filter((o) => o.origen === 'karve' && o.fase !== 'cerrada');
-  const cerradasKarveKb = kb.fases.find((f) => f.codigo === 'cerrada').ots.filter((o) => o.origen === 'karve');
-  ok('Kanban: las vivas importadas (≥ 800) con karve_estado y operario de Karve; ninguna cerrada de Karve (son de hace > 7 días)', x.s === 200 && vivasKb.length >= 800 && vivasKb.every((o) => o.karve_estado && o.karve_operario) && cerradasKarveKb.length === 0, `vivas=${vivasKb.length} cerradasKarve=${cerradasKarveKb.length}`);
-  ok('Kanban: total = abiertas del seed + vivas importadas + cerradas recientes del seed', kb.total === seedAbiertas + r.vivas.nuevas + faseCerrada.ots.length, `total=${kb.total}`);
+  const vivasKb = todasLasOT(kb).filter((o) => o.origen === 'karve');
+  ok('Tablero: las vivas importadas (≥ 800) con karve_estado, operario de Karve y etiqueta coherente con la vertical; sin columna de cerradas', x.s === 200 && vivasKb.length >= 800 && vivasKb.every((o) => o.karve_estado && o.karve_operario && (!o.etiqueta || o.etiqueta_nombre)) && vivasKb.filter((o) => o.etiqueta === 'repuesto').every((o) => o.fase === 'pausada') && !kb.fases.some((f) => f.codigo === 'cerrada'), `vivas=${vivasKb.length}`);
+  ok('Tablero: total = abiertas del seed + vivas importadas', kb.total === seedAbiertas + r.vivas.nuevas, `total=${kb.total}`);
   x = await pedir('/api/kanban?cerradas=90', { cookie: A });
   const cerradas90 = x.j.fases.find((f) => f.codigo === 'cerrada').ots.filter((o) => o.origen === 'karve');
-  ok('Kanban ?cerradas=90: aparecen las 20 cerradas de Karve', x.s === 200 && cerradas90.length === 20, `n=${cerradas90.length}`);
-  x = await pedir('/api/kanban', { cookie: GS });
+  ok('Tablero ?cerradas=90: aparecen las 20 cerradas de Karve', x.s === 200 && cerradas90.length === 20, `n=${cerradas90.length}`);
+  x = await pedir('/api/kanban', { cookie: OP });
   const satKb = todasLasOT(x.j).filter((o) => o.karve_estado === 'S.A.T. EXTERNO');
-  ok('gestor_sat: ve en su Kanban las S.A.T. EXTERNO importadas (sin técnico)', x.s === 200 && satKb.length >= 15 && todasLasOT(x.j).every((o) => o.tecnico_id === null || o.tecnico_nombre), `n=${satKb.length}`);
+  ok('operativo: ve en su Tablero las S.A.T. EXTERNO importadas (sin técnico)', x.s === 200 && satKb.length >= 15 && todasLasOT(x.j).every((o) => o.tecnico_id === null || o.tecnico_nombre), `n=${satKb.length}`);
 
   // Segunda importación: todo sin cambios; una O.T. editada en la app se conserva
   x = await pedir(`/api/ot/${o949.id}`, { cookie: A, metodo: 'PUT', body: { version: o949.version, sintoma: 'Editada en la app', origen: 'karve' } });
@@ -115,13 +120,15 @@ const todasLasOT = (kanban) => kanban.fases.flatMap((f) => f.ots);
   x = await pedir(`/api/ot/${o949.id}`, { cookie: A });
   ok('la O.T. editada conserva el síntoma de la app', x.s === 200 && x.j.sintoma === 'Editada en la app' && x.j.version === 2);
 
-  // Cerrar una O.T. en la app deja fecha_cierre y sale en la columna de cerradas
-  x = await pedir('/api/ot?abiertas=0&limite=1&estado=vb_factura', { cookie: A });
+  // Cerrar una O.T. en la app (etiqueta facturada) deja fecha_cierre; desaparece del Tablero y sale con ?cerradas=7
+  x = await pedir('/api/ot?abiertas=0&limite=1&estado=finalizada&etiqueta=vb_factura', { cookie: A });
   const vb = x.j.ots[0];
-  x = await pedir(`/api/ot/${vb.id}/estado`, { cookie: A, metodo: 'POST', body: { estado: 'cerrada', version: vb.version } });
-  ok('cerrar una O.T. desde la app → fecha_cierre de hoy', x.s === 200 && x.j.ot.estado === 'cerrada' && String(x.j.ot.fecha_cierre || '').startsWith(hoyMenos(0)), `${x.s} ${x.j && x.j.ot && x.j.ot.fecha_cierre}`);
+  x = await pedir(`/api/ot/${vb.id}/estado`, { cookie: A, metodo: 'POST', body: { estado: 'cerrada', etiqueta: 'facturada', version: vb.version } });
+  ok('cerrar una O.T. desde la app → fecha_cierre de hoy y etiqueta facturada', x.s === 200 && x.j.ot.estado === 'cerrada' && x.j.ot.etiqueta === 'facturada' && String(x.j.ot.fecha_cierre || '').startsWith(hoyMenos(0)), `${x.s} ${x.j && x.j.ot && x.j.ot.fecha_cierre}`);
   x = await pedir('/api/kanban', { cookie: A });
-  ok('…y aparece en la columna de cerradas del Kanban', x.s === 200 && x.j.fases.find((f) => f.codigo === 'cerrada').ots.some((o) => o.id === vb.id));
+  ok('…desaparece del Tablero por defecto', x.s === 200 && !todasLasOT(x.j).some((o) => o.id === vb.id));
+  x = await pedir('/api/kanban?cerradas=7', { cookie: A });
+  ok('…y aparece en la columna de cerradas con ?cerradas=7', x.s === 200 && x.j.fases.find((f) => f.codigo === 'cerrada').ots.some((o) => o.id === vb.id));
 
   console.log(res.join('\n'));
   const fallos = res.filter((r2) => r2.startsWith('FALLO')).length;

@@ -1,5 +1,5 @@
-# Lanza las pruebas de la Fase 3 sin tocar la base real: base temporal + seed + servidor en 5055 por ciclo,
-# navegador headless (Brave/Chrome/Edge) para las de interfaz y la prueba de migración de roles.
+# Lanza las pruebas de las Fases 3 a 4 sin tocar la base real: base temporal + seed + servidor en 5055 por ciclo,
+# navegador headless (Brave/Chrome/Edge) para las de interfaz y las pruebas de migración (roles y Tablero v2).
 # Uso: powershell -ExecutionPolicy Bypass -File tests\ejecutar-fase3.ps1 [-SinNavegador] [-Brave "C:\ruta\brave.exe"]
 param(
   [string]$Brave = "C:\Program Files\BraveSoftware\Brave-Browser\Application\brave.exe",
@@ -74,6 +74,8 @@ if (-not $SinNavegador) {
 
 Ciclo 'clientes2' @('cliente-prueba-clientes2.js', 'navegador-prueba-clientes2.js')
 Ciclo 'maquinas2' @('cliente-prueba-maquinas2.js', 'navegador-prueba-maquinas2.js', 'navegador-colores.js', 'cliente-prueba-numeracion.js')
+Ciclo 'tablero2' @('cliente-prueba-tablero2.js')
+Ciclo 'tablero2nav' @('navegador-prueba-tablero2.js')   # base aparte: el arnés HTTP deja el seed cambiado y el de navegador cuenta tarjetas del seed
 
 if (Select-String -Path (Join-Path $raiz '.env') -Pattern '^KARVE_COPIA_CONNECTION_STRING=' -Quiet -ErrorAction SilentlyContinue) {
   Ciclo 'karve' @('cliente-prueba-karve.js', 'cliente-prueba-importar-ot.js', 'navegador-prueba-karve.js')
@@ -82,6 +84,9 @@ if (Select-String -Path (Join-Path $raiz '.env') -Pattern '^KARVE_COPIA_CONNECTI
 Write-Host "`n### Migración de roles (base sintética)" -ForegroundColor Green
 $env:RUTA_BD = Join-Path $tmp 'migracion.db'; $env:APP_USUARIO = 'jefe'
 Ejecutar-Script 'prueba-migracion-roles.js'
+Write-Host "`n### Migración del Tablero v2 (base con los estados antiguos)" -ForegroundColor Green
+$env:RUTA_BD = Join-Path $tmp 'migracion-tablero.db'; $env:APP_USUARIO = 'admin_prueba'; $env:APP_CLAVE = 'clave-prueba-123'
+Ejecutar-Script 'prueba-migracion-tablero.js'
 $env:RUTA_BD = Join-Path $tmp 'numeracion.db'; $env:APP_USUARIO = 'admin_prueba'; $env:APP_CLAVE = 'clave-prueba-123'
 Ejecutar-Script 'prueba-numeracion-y-limpiar.js'
 
