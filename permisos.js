@@ -67,7 +67,9 @@ const ACCIONES = {
   'contadores.gestionar':   'Fijar el contador de numeración de O.T.',
   'karve.sincronizar':      'Lanzar la sincronización de clientes y máquinas desde Karve',
   // Vistas
-  'kanban.ver':             'Ver el tablero Kanban',
+  'kanban.ver':             'Ver el Tablero (verticales por estado)',
+  'planificador.ver':       'Ver el Planificador (calendario de bloques por técnico y día)',
+  'planificador.editar':    'Planificar: crear, mover y quitar bloques de las O.T. de su alcance',
   'informes.ver':           'Ver informes y estadísticas',
 };
 
@@ -79,8 +81,8 @@ const TODAS = Object.keys(ACCIONES);
 const MATRIZ = {
   administrativo: TODAS,
   responsable_st: TODAS.filter((a) => a !== 'usuarios.gestionar'),
-  gerencia: ['ot.ver', 'clientes.ver', 'maquinas.ver', 'kanban.ver', 'informes.ver'],
-  operativo: ['ot.ver', 'ot.crear', 'ot.editar', 'ot.cambiar_estado', 'ot.cerrar', 'ot.asignar', 'ot.aprobar_asignacion', 'clientes.ver', 'maquinas.ver', 'kanban.ver'],
+  gerencia: ['ot.ver', 'clientes.ver', 'maquinas.ver', 'kanban.ver', 'planificador.ver', 'informes.ver'],
+  operativo: ['ot.ver', 'ot.crear', 'ot.editar', 'ot.cambiar_estado', 'ot.cerrar', 'ot.asignar', 'ot.aprobar_asignacion', 'clientes.ver', 'maquinas.ver', 'kanban.ver', 'planificador.ver', 'planificador.editar'],
 
   tecnico: [
     'ot.ver', 'ot.cambiar_estado', 'ot.tiempos', 'ot.checklist', 'ot.fotos', 'ot.firmar',

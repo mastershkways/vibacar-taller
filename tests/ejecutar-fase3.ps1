@@ -76,6 +76,8 @@ Ciclo 'clientes2' @('cliente-prueba-clientes2.js', 'navegador-prueba-clientes2.j
 Ciclo 'maquinas2' @('cliente-prueba-maquinas2.js', 'navegador-prueba-maquinas2.js', 'navegador-colores.js', 'cliente-prueba-numeracion.js')
 Ciclo 'tablero2' @('cliente-prueba-tablero2.js')
 Ciclo 'tablero2nav' @('navegador-prueba-tablero2.js')   # base aparte: el arnés HTTP deja el seed cambiado y el de navegador cuenta tarjetas del seed
+Ciclo 'planificador' @('cliente-prueba-planificador.js')
+Ciclo 'planificadornav' @('navegador-prueba-planificador.js')
 
 if (Select-String -Path (Join-Path $raiz '.env') -Pattern '^KARVE_COPIA_CONNECTION_STRING=' -Quiet -ErrorAction SilentlyContinue) {
   Ciclo 'karve' @('cliente-prueba-karve.js', 'cliente-prueba-importar-ot.js', 'navegador-prueba-karve.js')

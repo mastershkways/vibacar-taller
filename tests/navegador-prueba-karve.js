@@ -79,7 +79,7 @@ const botonSync = (p) => evaluar(p, `!!document.querySelector('#nav .menu-lista 
   await evaluar(p, `[...document.querySelectorAll('#modales .modal-fondo button')].find(b => b.textContent === 'Sincronizar').click()`);
   ok('toast "Sincronizando con Karve…"', await esperarHasta(p, `[...document.querySelectorAll('.toast')].some(t => /Sincronizando/.test(t.textContent))`, 3000));
   const t0 = Date.now();
-  const llego = await esperarHasta(p, `!!document.querySelector('.modal') && /Sincronización con Karve/.test(document.querySelector('.modal h2')?.textContent || '')`, 120000);
+  const llego = await esperarHasta(p, `!!document.querySelector('.modal') && /Sincronización con Karve/.test(document.querySelector('.modal h2')?.textContent || '')`, 240000); // la copia de Karve a veces tarda 2 min
   ok(`modal de resumen en ${((Date.now() - t0) / 1000).toFixed(0)} s, con Clientes/Contactos/Máquinas/Duración y toast de resultado`, llego && (await evaluar(p, `(() => { const t = document.querySelector('.modal [data-ref="resumen"]').textContent; return /Clientes/.test(t) && /Contactos/.test(t) && /Máquinas/.test(t) && /Duración/.test(t) && /leídos en Karve/.test(t); })()`)) && (await esperarHasta(p, `[...document.querySelectorAll('.toast-ok')].some(t => /Karve:/.test(t.textContent))`, 3000)));
   ok('modal: lista de avisos (bastidores, sin cliente…)', await evaluar(p, `document.querySelectorAll('.modal [data-ref="alertas"] li').length >= 2`));
   await captura(p, '02-resumen-sincronizacion');

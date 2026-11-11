@@ -119,7 +119,7 @@ const irMaquinas = async (p) => { await evaluar(p, `location.hash = 'maquinas'`)
   await salir(p);
   await entrar(p, 'responsable1', 'prueba123');
   await esperarHasta(p, `document.querySelectorAll('#nav .menu').length === 1`);
-  ok('responsable_st: cabecera, Tablero por defecto, Maestros sí y Usuarios no', (await evaluar(p, `document.querySelector('#usuario-rol').textContent`)) === 'Responsable de Servicio Técnico' && (await evaluar(p, `document.querySelector('#nav button.activo')?.textContent`)) === 'Tablero' && JSON.stringify(await textosNav(p)) === JSON.stringify(['Tablero', 'Listado', 'Maestros']), (await textosNav(p)).join(' · '));
+  ok('responsable_st: cabecera, Planificador por defecto, Maestros sí y Usuarios no', (await evaluar(p, `document.querySelector('#usuario-rol').textContent`)) === 'Responsable de Servicio Técnico' && (await evaluar(p, `document.querySelector('#nav button.activo')?.textContent`)) === 'Planificador' && JSON.stringify(await textosNav(p)) === JSON.stringify(['Planificador', 'Tablero', 'Listado', 'Maestros']), (await textosNav(p)).join(' · '));
   await irMaquinas(p);
   await clicFila(p, 'MRT 2150');
   ok('responsable_st: ficha bloqueada sin botón "Editar campos bloqueados"; horas editables; Desactivar visible', await esperarHasta(p, `(() => { const m = document.querySelector('.modal'); if (!m) return false; return m.querySelector('[name=marca]').disabled && !m.querySelector('[name=horometro_ultimo]').disabled && m.querySelector('[data-ref="desbloquear"]').classList.contains('oculto') && !m.querySelector('[data-ref="desactivar"]').classList.contains('oculto'); })()`));
@@ -137,7 +137,11 @@ const irMaquinas = async (p) => { await evaluar(p, `location.hash = 'maquinas'`)
   await salir(p);
   await entrar(p, 'gerencia1', 'prueba123');
   await esperarHasta(p, `document.querySelectorAll('#nav .menu').length === 1`);
-  ok('gerencia: Tablero por defecto, sin botón "+ Nueva O.T.", Maestros sí, Usuarios no', (await evaluar(p, `document.querySelector('#nav button.activo')?.textContent`)) === 'Tablero' && (await evaluar(p, `document.querySelector('[data-accion="nueva"]')?.classList.contains('oculto')`)) === true && !(await textosNav(p)).includes('Usuarios'));
+  await esperarHasta(p, `!!document.querySelector('#nav button.activo')`);
+  const homeGerencia = await evaluar(p, `document.querySelector('#nav button.activo')?.textContent`);
+  await evaluar(p, `location.hash = 'kanban'`); // su home es el Planificador (F4-02); el botón de alta está en el Tablero
+  await esperarHasta(p, `!!document.querySelector('[data-accion="nueva"]')`);
+  ok('gerencia: Planificador por defecto; en el Tablero, sin botón "+ Nueva O.T.", Maestros sí, Usuarios no', homeGerencia === 'Planificador' && (await evaluar(p, `document.querySelector('[data-accion="nueva"]')?.classList.contains('oculto')`)) === true && !(await textosNav(p)).includes('Usuarios'));
   await captura(p, '06-gerencia-tablero');
   await irMaquinas(p);
   ok('gerencia: máquinas sin botón Nueva y ficha en solo lectura', (await evaluar(p, `document.querySelector('[data-accion="nueva-maquina"]').classList.contains('oculto')`)) && (await clicFila(p, 'MRT 2150')) && await esperarHasta(p, `(() => { const m = document.querySelector('.modal'); return !!m && m.querySelector('[name=horometro_ultimo]').disabled && m.querySelector('[data-ref="guardar"]').classList.contains('oculto') && m.querySelector('[data-ref="desbloquear"]').classList.contains('oculto') && m.querySelector('[data-ref="aviso-bloqueo"]').classList.contains('oculto'); })()`));
@@ -147,8 +151,9 @@ const irMaquinas = async (p) => { await evaluar(p, `location.hash = 'maquinas'`)
   // --- Operativo (antes gestor de SAT): Tablero solo con sus O.T., las de SAT o sin técnico ----------------
   await salir(p);
   await entrar(p, 'operativo1', 'prueba123');
-  await esperarHasta(p, `document.querySelectorAll('.tarjeta').length > 0`);
-  const tarjetas = await evaluar(p, `[...document.querySelectorAll('.tarjeta')].map(t => t.textContent)`);
+  await evaluar(p, `location.hash = 'kanban'`); // su home es el Planificador (F4-02)
+  await esperarHasta(p, `document.querySelectorAll('.columna .tarjeta').length > 0`);
+  const tarjetas = await evaluar(p, `[...document.querySelectorAll('.columna .tarjeta')].map(t => t.textContent)`);
   ok(`operativo: Tablero con ${tarjetas.length} tarjetas, ninguna de un técnico interno (Mikel/Ane)`, tarjetas.length > 0 && tarjetas.length < 18 && !tarjetas.some((t) => /Mikel Etxeberria|Ane Zubiaurre/.test(t)), `${tarjetas.length}`);
   ok('operativo: cabecera "Operativo administrativo", sin Usuarios', (await evaluar(p, `document.querySelector('#usuario-rol').textContent`)) === 'Operativo administrativo' && !(await textosNav(p)).includes('Usuarios'));
   await captura(p, '07-operativo-tablero');

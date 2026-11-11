@@ -98,7 +98,7 @@ const VERTICALES = ['pendiente_planificar', 'planificada', 'en_curso', 'pausada'
   x = await pedir(`/api/ot/${ot.id}/estado`, { cookie: RC, metodo: 'POST', body: { estado: 'cerrada', etiqueta: 'facturada', version: ot.version } });
   ok('recambista: → cerrada → 403', x.s === 403, `${x.s}`);
   x = await pedir(`/api/ot/${ot.id}/estado`, { cookie: RC, metodo: 'POST', body: { estado: 'pendiente_planificar', nota: 'Repuesto recibido', version: ot.version } });
-  ok('recambista: pausada → pendiente_planificar (repuesto recibido) → 200 y etiqueta a null', x.s === 200 && x.j.ot.estado === 'pendiente_planificar' && x.j.ot.etiqueta === null, x.t.slice(0, 120));
+  ok('recambista: pausada → pendiente_planificar con un bloque futuro (el del seed) → 200, queda planificada conservando su plan, etiqueta a null', x.s === 200 && x.j.cambio.nuevo === 'planificada' && x.j.ot.estado === 'planificada' && x.j.ot.etiqueta === null && /conserva su planificación$/.test(x.j.ot.historial.at(-1).nota), x.t.slice(0, 120));
   ot = x.j.ot;
   x = await pedir('/api/tecnicos', { cookie: RC });
   ok('recambista: GET /tecnicos → 200 (filtro por operario del Tablero)', x.s === 200 && Array.isArray(x.j) && x.j.length >= 3, `${x.s}`);
@@ -106,9 +106,9 @@ const VERTICALES = ['pendiente_planificar', 'planificada', 'en_curso', 'pausada'
   // --- Admin: planificada con técnico desde el modal, asignar ahora, cerrar con etiqueta, reabrir ------------
   const tecnicos = (await pedir('/api/tecnicos', { cookie: A })).j;
   const ane = tecnicos.find((t) => t.nombre === 'Ane Zubiaurre');
-  x = await pedir(`/api/ot/${ot.id}/estado`, { cookie: A, metodo: 'POST', body: { estado: 'planificada', tecnico_id: ane.id, nota: 'Mañana a primera hora', version: ot.version } });
+  x = await pedir(`/api/ot/${pend[4].id}/estado`, { cookie: A, metodo: 'POST', body: { estado: 'planificada', tecnico_id: ane.id, nota: 'Mañana a primera hora', version: pend[4].version } });
   ok('admin: → planificada con tecnico_id → técnico asignado y nota "Técnico: Ane … · nota"', x.s === 200 && x.j.ot.estado === 'planificada' && x.j.ot.tecnico_id === ane.id && /^Técnico: Ane Zubiaurre · Mañana a primera hora$/.test(x.j.ot.historial.at(-1).nota), x.j && x.j.ot && x.j.ot.historial.at(-1).nota);
-  x = await pedir(`/api/ot/${ot.id}/estado`, { cookie: A, metodo: 'POST', body: { estado: 'planificada', tecnico_id: 999999, version: x.j.ot.version } });
+  x = await pedir(`/api/ot/${pend[4].id}/estado`, { cookie: A, metodo: 'POST', body: { estado: 'planificada', tecnico_id: 999999, version: x.j.ot.version } });
   ok('admin: mismo estado → 400', x.s === 400, `${x.s}`);
   const pend2 = pend[3]; // sin propuesta pendiente (pend[1] es la de Lezama, que ya la tiene)
   x = await pedir(`/api/ot/${pend2.id}/asignar`, { cookie: A, metodo: 'POST', body: { tecnico_id: ane.id, aprobar: true } });

@@ -160,7 +160,8 @@ auth.js              acceso, sesiones, cookie firmada
 permisos.js          roles, acciones y matriz de permisos (única fuente de verdad)
 validar.js           validadores de entrada y ErrorHttp
 rutas-maestros.js    API: clientes, máquinas, estados, técnicos, usuarios
-rutas-ot.js          API: O.T., estados, asignaciones, Kanban
+rutas-ot.js          API: O.T., estados, asignaciones, Tablero
+rutas-planificador.js API: Planificador (calendario, bandeja, bloques, avisos)
 karve.js             conexión de SOLO LECTURA a Karve por ODBC (driver portable en driver-sql/, ignorado por git)
 public/              interfaz: acceso.html, index.html, style.css, app.js, img/
 tests/               pruebas automáticas (ejecutar-fase3.ps1, arneses HTTP y de navegador; historico/ con los de las Fases 1-2)
@@ -225,4 +226,18 @@ Desde la Fase 4 el Tablero tiene **cinco verticales** (Pendiente de planificar �
 
 El flujo es **libre con confirmación**: cualquier estado puede ir a cualquier otro arrastrando la tarjeta o desde el detalle; antes de confirmar se piden **dos cosas** (el motivo o etiqueta, o el técnico al planificar, y una nota). Límites que aplica el servidor: técnico y SAT externo solo pueden pasar sus O.T. a En curso, Pausada o Finalizada; cerrar o reabrir exige el permiso `ot.cerrar` (administrativo, responsable y operativo). La etiqueta se puede cambiar sin mover de vertical desde el detalle (también el recambista). Todo queda en el historial.
 
-El rol **operativo** (antes "gestor de SAT externos") gestiona las O.T. que abre él, las de SAT externos y las que aún no tienen técnico. La tabla `ot_bloques` (técnico, día, hora, duración) ya existe para el Planificador de F4-02; el detalle de la O.T. enseña sus bloques cuando los tenga.
+El rol **operativo** (antes "gestor de SAT externos") gestiona las O.T. que abre él, las de SAT externos y las que aún no tienen técnico.
+
+## 15. Planificador (Fase 4)
+
+El **Planificador** es la pantalla de entrada del responsable de servicio técnico, del operativo y de gerencia (que solo mira). El Tablero dice en qué punto está cada O.T. y por qué; el Planificador, **quién la hace y cuándo**.
+
+- **Bandeja "Sin planificar"** a la izquierda: O.T. abiertas sin ningún bloque de hoy en adelante (pendientes de planificar, planificadas sin bloque como las importadas de Karve, y las en curso cuyo último bloque ya pasó). Arriba, las **listas para planificar**: cuando una O.T. sale de Pausada (p. ej. el recambista marca que llegó el repuesto) aparece con el distintivo "Repuesto recibido" y cuántas más hay del mismo cliente. Buscador, filtro por zona, agrupar por zona o cliente y "Incluir pausadas" para preplanificar.
+- **Vista Día**: una columna por técnico (internos y luego SAT), eje de horas y bloques con alto proporcional a su duración. **Vista Semana**: una fila por técnico y una celda por día, con tarjetas compactas; la cabecera de cada día lleva a su vista Día.
+- **Arrastrar** una O.T. de la bandeja al calendario abre un mini-modal (técnico, día, hora, duración de **2 h por defecto**, nota). Arrastrar un bloque lo cambia de hora, día o técnico; el borde inferior lo alarga o acorta en tramos de 15 minutos; "+ Otro bloque" reparte la O.T. en varios días o técnicos; "Quitar bloque" (o soltarlo en la bandeja) la devuelve a la bandeja. También se puede planificar desde el detalle de la O.T.
+- **Estado**: el calendario solo mueve la O.T. entre "Pendiente de planificar" y "Planificada" (al tener su primer bloque futuro o al quedarse sin ninguno). Una pausada se puede preplanificar sin sacarla de la pausa; cuando se resuelve, queda planificada conservando su plan. El técnico de la O.T. es el de su próximo bloque. Todo queda en el historial y la tarjeta del Tablero enseña el próximo bloque ("📅 fecha hora · técnico +N").
+- **Avisos** (en ámbar, no bloquean): más horas previstas que la jornada, dos o más zonas el mismo día para un técnico, y bloques que se solapan.
+
+**Seed de pruebas del Planificador** (mientras se valida la aplicación): `node scripts/planificaciones-prueba.js` simula y `--aplicar` escribe, sobre los datos ya traídos de Karve, una capa de prueba: técnicos `prueba_tec1…` con el nombre y el código de operario de Karve (lo lee en solo lectura) de quienes más O.T. planificadas tienen, un SAT de prueba, sus O.T. repartidas en los próximos días laborables (con un día sobrecargado, un solape y una O.T. partida), tres "repuesto recibido" en la bandeja y el usuario `prueba_responsable` (contraseña `prueba123`). `--quitar` retira los bloques y desactiva esos usuarios; para dejar la base limpia del todo antes de producción, la purga (`generar-datos-prueba.js --limpiar`) y volver a sincronizar e importar desde Karve. Con `RUTA_BD` se puede aplicar a una copia en vez de a la base en uso.
+
+Para que aparezcan columnas hacen falta usuarios activos con rol Técnico o SAT externo (Usuarios → Nuevo usuario); conviene ponerles su código de operario de Karve para que la importación de O.T. les enlace las suyas. La jornada visible (07:00–19:00) y las horas por día (8) se pueden cambiar en el `.env` con `PLANIFICADOR_HORA_INICIO`, `PLANIFICADOR_HORA_FIN` y `PLANIFICADOR_HORAS_DIA` (hay que reiniciar).

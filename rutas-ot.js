@@ -8,6 +8,9 @@
 //     a en curso / pausada / finalizada; entrar o salir de un estado final (cerrada) exige `ot.cerrar`. La etiqueta pertenece
 //     a un estado: al cambiar de estado se pone la que venga (validada) o ninguna. Todo cambio escribe en `ot_historial`.
 //   - cualquier UPDATE sobre `ot` incrementa `version`; el PUT exige la version que vio el cliente (409 si no coincide).
+//   - F4-02: "pendiente de planificar" significa sin plan. Si alguien manda ahí una O.T. que tiene bloques de hoy en adelante
+//     (p. ej. una pausada preplanificada a la que le llega el repuesto), queda en "planificada". Al salir de Pausada hacia
+//     pendiente de planificar se anota la propuesta para la bandeja del Planificador (`ot.propuesta`).
 
 const express = require('express');
 const crypto = require('crypto');
@@ -74,6 +77,7 @@ const stmt = {
   asignacionPendiente: db.prepare(`SELECT id FROM ot_asignaciones WHERE ot_id = ? AND estado = 'propuesta' LIMIT 1`),
   asignacion: db.prepare('SELECT * FROM ot_asignaciones WHERE id = ? AND ot_id = ?'),
   tecnico: db.prepare(`SELECT id, nombre, rol FROM usuarios WHERE id = ? AND activo = 1 AND rol IN ('tecnico', 'sat')`),
+  bloquesFuturos: db.prepare(`SELECT COUNT(*) AS n FROM ot_bloques WHERE ot_id = ? AND dia >= date('now', 'localtime')`),
   cliente: db.prepare('SELECT id, activo FROM clientes WHERE id = ?'),
   maquina: db.prepare('SELECT id, cliente_id, activo FROM maquinas WHERE id = ?'),
 };
@@ -143,6 +147,9 @@ function aplicarCambioEstado({ otId, destino, etiqueta = null, tecnicoId = undef
   if (versionEsperada !== null && actual.version !== versionEsperada) {
     throw new ErrorHttp(409, 'La O.T. ha sido modificada por otro usuario. Recarga y vuelve a intentarlo.', { version: actual.version });
   }
+  // F4-02: con bloques de hoy en adelante no puede quedar "pendiente de planificar": conserva su plan y queda planificada.
+  let conservaPlan = false;
+  if (destino === 'pendiente_planificar' && actual.estado !== 'planificada' && stmt.bloquesFuturos.get(otId).n > 0) { destino = 'planificada'; conservaPlan = true; }
   if (actual.estado === destino) throw new ErrorHttp(400, 'La O.T. ya está en ese estado');
   const nuevo = stmt.estado.get(destino);
   if (!nuevo) throw new ErrorHttp(400, `El estado "${destino}" no existe`);
@@ -164,7 +171,10 @@ function aplicarCambioEstado({ otId, destino, etiqueta = null, tecnicoId = undef
   // F3.6-02: fecha de cierre al entrar en un estado final; se limpia al reabrir.
   if (nuevo.es_final) db.prepare('UPDATE ot SET fecha_cierre = ? WHERE id = ?').run(ahora(), otId);
   else if (actual.es_final) db.prepare('UPDATE ot SET fecha_cierre = NULL WHERE id = ?').run(otId);
-  const partes = [et ? `[${et.nombre}]` : null, tecnico ? `Técnico: ${tecnico.nombre}` : null, nota].filter(Boolean);
+  // F4-02: propuesta para la bandeja del Planificador (sale de Pausada y queda sin plan); en cualquier otro cambio se limpia.
+  const propuesta = actual.estado === 'pausada' && destino === 'pendiente_planificar' ? (actual.etiqueta || 'lista') : null;
+  db.prepare('UPDATE ot SET propuesta = ?, propuesta_fecha = ? WHERE id = ?').run(propuesta, propuesta ? ahora() : null, otId);
+  const partes = [et ? `[${et.nombre}]` : null, tecnico ? `Técnico: ${tecnico.nombre}` : null, nota, conservaPlan ? 'conserva su planificación' : null].filter(Boolean);
   stmt.historial.run(otId, actual.estado, destino, usuario.id, ahora(), partes.join(' · ') || null);
   return { anterior: actual.estado, nuevo: destino, etiqueta: et ? et.codigo : null };
 }
@@ -296,7 +306,10 @@ module.exports = function montarRutasOT(app) {
              o.cliente_id, c.nombre AS cliente_nombre, c.zona AS cliente_zona,
              o.maquina_id, m.marca AS maquina_marca, m.modelo AS maquina_modelo, m.num_flota AS maquina_flota,
              o.tecnico_id, t.nombre AS tecnico_nombre,
-             o.karve_estado, o.karve_operario, o.fecha_cierre
+             o.karve_estado, o.karve_operario, o.fecha_cierre,
+             (SELECT b.dia || ' ' || b.hora_inicio FROM ot_bloques b WHERE b.ot_id = o.id AND b.dia >= date('now', 'localtime') ORDER BY b.dia, b.hora_inicio, b.id LIMIT 1) AS proximo_bloque,
+             (SELECT u2.nombre FROM ot_bloques b JOIN usuarios u2 ON u2.id = b.tecnico_id WHERE b.ot_id = o.id AND b.dia >= date('now', 'localtime') ORDER BY b.dia, b.hora_inicio, b.id LIMIT 1) AS proximo_tecnico,
+             (SELECT COUNT(*) FROM ot_bloques b WHERE b.ot_id = o.id AND b.dia >= date('now', 'localtime')) AS bloques_futuros
         FROM ot o
         JOIN estados e ON e.codigo = o.estado
         JOIN fases fa ON fa.codigo = e.fase
@@ -462,3 +475,5 @@ module.exports = function montarRutasOT(app) {
 
   app.use('/api', r);
 };
+// Para rutas-planificador.js (mismo alcance, mismo cambio de estado y mismo detalle que aquí).
+Object.assign(module.exports, { filtroAlcance, cargarOT, detalleOT, aplicarCambioEstado });

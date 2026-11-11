@@ -37,7 +37,7 @@ if (limpiar) {
     ['jruiz', 'Jon Ruiz', 'comercial', '0000028'],
   ];
   const purgar = db.transaction(() => {
-    for (const t of ['ot_asignaciones', 'ot_historial', 'ot', 'maquinas', 'cliente_contactos', 'clientes', 'sincronizaciones', 'sesiones', 'usuarios', 'contadores']) db.exec(`DELETE FROM ${t}`);
+    for (const t of ['ot_bloques', 'ot_asignaciones', 'ot_historial', 'ot', 'maquinas', 'cliente_contactos', 'clientes', 'sincronizaciones', 'sesiones', 'usuarios', 'contadores']) db.exec(`DELETE FROM ${t}`);
     db.exec("DELETE FROM sqlite_sequence");
     const ins = db.prepare('INSERT INTO usuarios (usuario, nombre, clave_hash, rol, karve_id) VALUES (?, ?, ?, ?, ?)');
     ins.run(adminUsuario, 'Administrador', hashClave(adminClave), 'administrativo', null);
@@ -101,6 +101,10 @@ const CONTACTOS = {
   B48111222: ['Txomin Txorierri', '944 530 401', 'Txomin Txorierri', '699 530 402', 'info@txorierri.example', 'info@txorierri.example', 1500],
   B48333444: ['Ventas Berriz', '946 826 901', 'Patxi Berriz', '688 826 902', 'ventas@berriz.example', 'ventas@berriz.example', 1300],
 };
+
+// Zona de cada cliente por CIF (F4-03: avisos del Planificador). Todos en Bizkaia salvo Reciclajes Lautada (Vitoria → Araba).
+const ZONA_DEFECTO = 'Bizkaia';
+const ZONAS = { B01234567: 'Araba' };
 
 // Máquinas por cliente (índice en CLIENTES): [marca, modelo, bastidor, num_flota, horometro]
 const MAQUINAS = {
@@ -209,7 +213,7 @@ if ((nClientes || nOT) && !anadir) {
 const admin = db.prepare("SELECT id, nombre FROM usuarios WHERE rol IN ('administrativo', 'responsable_st') AND activo = 1 ORDER BY id LIMIT 1").get();
 if (!admin) { console.error('No hay ningún administrativo ni responsable activo. Arranca el servidor una vez con APP_USUARIO/APP_CLAVE.'); process.exit(1); }
 
-const resumen = { usuariosCreados: [], clientes: 0, maquinas: 0, ots: 0, porFase: {} };
+const resumen = { usuariosCreados: [], clientes: 0, maquinas: 0, ots: 0, bloques: 0, porFase: {} };
 
 const generar = db.transaction(() => {
   // Usuarios de prueba (solo los que falten)
@@ -244,6 +248,7 @@ const generar = db.transaction(() => {
   // F3-03: contactos y última factura (también a los clientes que ya existían); los dos antiguos vuelven a activo = 1
   const updContactos = db.prepare('UPDATE clientes SET compras_nombre = ?, compras_telefono = ?, tecnico_nombre = ?, tecnico_telefono = ?, tecnico_email = ?, email_facturas = ?, ultima_factura = ?, activo = 1 WHERE cif = ?');
   for (const [cif, c] of Object.entries(CONTACTOS)) updContactos.run(c[0], c[1], c[2], c[3], c[4], c[5], c[6] == null ? null : fmt(fechaHace(c[6], 10)).slice(0, 10), cif);
+  for (const c of CLIENTES) db.prepare('UPDATE clientes SET zona = ? WHERE cif = ? AND zona IS NULL').run(ZONAS[c[1]] || ZONA_DEFECTO, c[1]);
   // F2-05: cartera del comercial de prueba: Áridos Ibaizabal y Grúas Lezama (tienen O.T. en varias fases)
   db.prepare('UPDATE clientes SET comercial_id = ? WHERE id IN (?, ?)').run(usuarioPor.comercial1.id, clienteIds[1], clienteIds[3]);
 
@@ -272,6 +277,9 @@ const generar = db.transaction(() => {
   const insAsig = db.prepare(`INSERT INTO ot_asignaciones (ot_id, tecnico_id, origen, propuesto_por, estado, fecha, resuelto_por, resuelto_en, nota) VALUES (?, ?, 'manual', ?, ?, ?, ?, ?, ?)`);
   const estadoPor = Object.fromEntries(db.prepare('SELECT codigo, fase FROM estados').all().map((e) => [e.codigo, e.fase]));
   const etiquetaPor = Object.fromEntries(db.prepare('SELECT codigo, nombre FROM etiquetas').all().map((e) => [e.codigo, e.nombre]));
+  // F4-02: un bloque de 2 h para las O.T. con técnico que están en curso (hoy) o planificadas (mañana), para que el Planificador tenga datos.
+  const insBloque = db.prepare('INSERT INTO ot_bloques (ot_id, tecnico_id, dia, hora_inicio, duracion_min, orden, creado_por) VALUES (?, ?, ?, ?, 120, ?, ?)');
+  const bloquesDia = {};
 
   const ordenadas = OTS.map((o, i) => ({ o, i })).sort((a, b) => b.o[10] - a.o[10] || a.i - b.i);
   let diaAnterior = null, enElDia = 0;
@@ -324,6 +332,12 @@ const generar = db.transaction(() => {
     }
     db.prepare('UPDATE ot SET estado = ?, etiqueta = ?, tecnico_id = ?, version = ?, actualizado = ?, fecha_cierre = ? WHERE id = ?')
       .run(estadoFinal, etiquetaFinal, asignada ? tecnico.id : null, version, camino.length ? ultima() : null, estadoFinal === 'cerrada' ? ultima() : null, otId);
+    if (tecnico && (estadoFinal === 'en_curso' || estadoFinal === 'planificada')) {
+      const diaBloque = fmt(fechaHace(estadoFinal === 'en_curso' ? 0 : -1)).slice(0, 10);
+      const n = bloquesDia[`${tecnico.id}|${diaBloque}`] = (bloquesDia[`${tecnico.id}|${diaBloque}`] || 0) + 1;
+      insBloque.run(otId, tecnico.id, diaBloque, n === 1 ? '08:00' : '11:00', n, admin.id);
+      resumen.bloques++;
+    }
     resumen.ots++;
     const fase = estadoPor[estadoFinal] || estadoFinal;
     resumen.porFase[fase] = (resumen.porFase[fase] || 0) + 1;
@@ -337,7 +351,7 @@ try {
   process.exit(1);
 }
 
-console.log(`✅ Datos de prueba generados: ${resumen.clientes} clientes, ${resumen.maquinas} máquinas y ${resumen.ots} O.T.`);
+console.log(`✅ Datos de prueba generados: ${resumen.clientes} clientes, ${resumen.maquinas} máquinas, ${resumen.ots} O.T. y ${resumen.bloques} bloques en el Planificador.`);
 console.log('   O.T. por fase: ' + Object.entries(resumen.porFase).map(([f, n]) => `${f} ${n}`).join(' · '));
 if (resumen.usuariosCreados.length) {
   console.log(`   Usuarios de prueba creados (contraseña "${CLAVE_PRUEBA}"): ${resumen.usuariosCreados.join(', ')}`);

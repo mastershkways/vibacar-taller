@@ -5,6 +5,7 @@ Aplicación web para gestionar las **Órdenes de Trabajo (O.T.)** de reparación
 ## Qué hace
 
 - **Abre y sigue las O.T.**: cada orden tiene su número, el mismo que en Karve (`0000107951`), su cliente, su máquina, su estado y su historial completo de cambios.
+- **Planificador** en forma de calendario para quien reparte el trabajo: vista por día (una columna por técnico) y por semana, una bandeja con las O.T. sin planificar (arriba las que acaban de recibir el repuesto) y bloques que se arrastran para fijar técnico, día, hora y duración. Avisa, sin bloquear, si un técnico tiene más horas que su jornada, dos zonas el mismo día o bloques solapados.
 - **Tablero** para el taller: cinco verticales (pendiente de planificar, planificada, en curso, pausada, finalizada) y, dentro, etiquetas con el motivo (pendiente de repuesto, presupuesto, pendiente de nº de pedido, SAT externo, Vº B factura…). Las urgentes van arriba, cada rol tiene su vertical resaltada y las cerradas desaparecen del Tablero (quedan en el listado). Cualquier cambio de estado pide motivo y nota antes de confirmarse.
 - **Vista para tablet** del técnico: solo ve sus O.T. asignadas, registra tiempos, checklist, fotos y firma del cliente.
 - **Recambios**: el almacén vincula los repuestos usados a cada O.T.
@@ -48,4 +49,4 @@ La base de datos se crea sola en `.cache/datos.db` la primera vez.
 
 ## Estado del proyecto
 
-En desarrollo. **Fases 1 a 3.5 completadas** (octubre y noviembre de 2026): acceso con usuarios y roles, API y Tablero de O.T., pantallas de clientes, máquinas y usuarios, roles del servicio técnico y la lectura de Karve (clientes, contactos, máquinas, numeración de las O.T. y nº de flota). **Fase 3.6 completada** (O.T. vivas de Karve en el Tablero) y **Fase 4 en curso**: Tablero v2 con verticales y etiquetas (hecho) y, a continuación, el Planificador en forma de calendario, el tablero del técnico y el cronómetro. El plan por fases está en `contexto/PLAN.md` (archivo local, no versionado).
+En desarrollo. **Fases 1 a 3.5 completadas** (octubre y noviembre de 2026): acceso con usuarios y roles, API y Tablero de O.T., pantallas de clientes, máquinas y usuarios, roles del servicio técnico y la lectura de Karve (clientes, contactos, máquinas, numeración de las O.T. y nº de flota). **Fase 3.6 completada** (O.T. vivas de Karve en el Tablero) y **Fase 4 en curso**: Tablero v2 con verticales y etiquetas y Planificador en forma de calendario (hechos); a continuación, el tablero del técnico y el cronómetro. El plan por fases está en `contexto/PLAN.md` (archivo local, no versionado).

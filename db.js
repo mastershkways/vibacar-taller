@@ -301,6 +301,10 @@ const COLUMNAS_NUEVAS = [
   // Fase 4 (F4-01): etiqueta dentro de la vertical (catálogo `etiquetas`) y roles que "limpian" cada vertical.
   ['ot', 'etiqueta', 'TEXT'],
   ['estados', 'responsables', 'TEXT'],                     // roles separados por coma; el Tablero resalta "tu vertical"
+  // Fase 4 (F4-02): propuesta de la bandeja del Planificador. Al salir de Pausada hacia "pendiente de planificar" se guarda
+  // la etiqueta que tenía (repuesto → "Repuesto recibido") y cuándo; se borra al planificarla o al cambiar otra vez de estado.
+  ['ot', 'propuesta', 'TEXT'],
+  ['ot', 'propuesta_fecha', 'TEXT'],
 ];
 
 function asegurarColumna(tabla, columna, definicion) {

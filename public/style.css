@@ -294,6 +294,97 @@ input.mayusculas { text-transform: uppercase; }
 .modal-fondo.tablet .btn-grande { min-height: 56px; font-size: 18px; }
 .modal-fondo.tablet textarea, .modal-fondo.tablet select { min-height: 56px; font-size: 18px; }
 .modal-fondo.tablet textarea { min-height: 150px; }
+.tarjeta .prevista.proximo { color: var(--texto-suave); font-weight: 600; }
+.btn-en-linea { margin-left: 6px; vertical-align: baseline; }
+
+/* --- 4.5 Planificador (F4-02): bandeja a la izquierda y calendario Día / Semana ------------------------------------------- */
+.plan-nav { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.plan-nav input[type=date] { width: auto; min-height: 32px; padding: 4px 8px; font-size: 13px; }
+.plan-rango { margin-right: 6px; font-size: 14px; }
+.conmutador { display: inline-flex; border: 1px solid var(--borde-fuerte); border-radius: var(--radio-s); overflow: hidden; }
+.conmutador button { border: 0; background: var(--tarjeta); padding: 6px 14px; font: inherit; font-size: 13px; font-weight: 600; cursor: pointer; color: var(--texto-suave); transition: var(--transicion); }
+.conmutador button + button { border-left: 1px solid var(--borde-fuerte); }
+.conmutador button.activo { background: var(--naranja); color: var(--sobre-naranja); }
+.plan { display: grid; grid-template-columns: 320px minmax(0, 1fr); gap: 14px; align-items: start; }
+.bandeja {
+  background: var(--fondo-2); border: 1px solid var(--borde); border-radius: var(--radio-l); padding: 10px;
+  display: flex; flex-direction: column; max-height: calc(100vh - var(--alto-cabecera) - 100px); min-width: 0;
+}
+.bandeja h3 { font-size: 12.5px; text-transform: uppercase; letter-spacing: .06em; color: var(--texto-suave); padding: 6px 8px 10px; display: flex; justify-content: space-between; align-items: center; }
+.bandeja h3 span { background: var(--tarjeta); border: 1px solid var(--borde); border-radius: 999px; padding: 1px 9px; font-size: 12px; color: var(--texto); min-width: 26px; text-align: center; }
+.bandeja form { display: flex; flex-direction: column; gap: 6px; padding: 0 2px 10px; }
+.bandeja form input[type=search], .bandeja form select { min-height: 34px; padding: 5px 8px; font-size: 13px; }
+.bandeja-selects { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
+.bandeja form .check { font-size: 12.5px; margin: 2px 0 0; color: var(--texto-suave); }
+.bandeja-lista { overflow-y: auto; overflow-x: hidden; display: flex; flex-direction: column; gap: 8px; min-height: 90px; flex: 1; padding: 2px; border-radius: 10px; transition: var(--transicion); }
+.bandeja-lista.soltar-aqui, .plan-celda.soltar-aqui { outline: 2px dashed var(--naranja); outline-offset: -2px; background: var(--naranja-suave); }
+.bandeja-grupo { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .05em; color: var(--texto-suave); padding: 6px 6px 0; display: flex; justify-content: space-between; }
+.bandeja-grupo span { font-weight: 600; color: var(--texto-tenue); }
+.tarjeta-bandeja { padding: 9px 11px; font-size: 13px; }
+.tarjeta-bandeja:hover { transform: none; }
+.tarjeta-bandeja.propuesta { border-color: var(--ok-borde); box-shadow: 0 0 0 1px var(--ok-borde), var(--sombra-1); }
+.tarjeta-bandeja .etiquetas:empty { display: none; }
+.tarjeta-bandeja .etiquetas .chip { font-size: 11px; padding: 2px 9px; }
+
+.calendario { background: var(--tarjeta); border: 1px solid var(--borde); border-radius: var(--radio-l); box-shadow: var(--sombra-1); overflow: auto; max-height: calc(100vh - var(--alto-cabecera) - 100px); min-height: 320px; }
+.plan-dia { display: grid; min-width: max-content; }
+.plan-esquina, .plan-cab { position: sticky; top: 0; z-index: 5; background: var(--tarjeta); border-bottom: 1px solid var(--borde-fuerte); padding: 8px 10px; font-size: 13px; }
+.plan-dia .plan-esquina { left: 0; z-index: 6; }
+.plan-cab { border-left: 1px solid var(--borde); }
+.plan-cab.con-aviso { background: var(--aviso-fondo); }
+.plan-cab .chip, .plan-semana th .chip { font-size: 10px; padding: 1px 7px; vertical-align: middle; }
+.plan-carga { font-size: 12px; color: var(--texto-suave); margin-top: 2px; font-weight: 500; }
+.plan-carga.sobre { color: var(--error); font-weight: 700; }
+.chip-aviso { background: var(--aviso-fondo); color: var(--aviso-texto); border: 1px solid var(--aviso-borde); font-size: 10px; padding: 1px 6px; cursor: help; }
+.plan-horas { position: sticky; left: 0; z-index: 4; background: var(--tarjeta); border-right: 1px solid var(--borde); }
+.plan-horas span { position: absolute; right: 6px; margin-top: 2px; font-size: 11px; color: var(--texto-tenue); font-variant-numeric: tabular-nums; }
+.plan-col {
+  position: relative; border-left: 1px solid var(--borde);
+  background-image: linear-gradient(to bottom, var(--borde) 1px, transparent 1px), linear-gradient(to bottom, transparent 50%, var(--fondo-2) 50%, transparent calc(50% + 1px));
+}
+.plan-ahora { position: absolute; left: 0; right: 0; height: 2px; background: var(--error); opacity: .7; z-index: 1; pointer-events: none; }
+.plan-sombra { position: absolute; left: 2px; right: 2px; z-index: 4; pointer-events: none; background: var(--naranja-suave); border: 2px dashed var(--naranja); border-radius: 8px; font-size: 12px; font-weight: 700; color: var(--naranja-texto); padding: 2px 8px; }
+
+.bloque {
+  position: absolute; z-index: 2; box-sizing: border-box; overflow: hidden; cursor: pointer; user-select: none;
+  background: var(--tarjeta); border: 1px solid var(--borde-fuerte); border-left: 4px solid var(--texto-suave); border-radius: 8px;
+  padding: 3px 8px 6px; font-size: 12px; line-height: 1.3; box-shadow: var(--sombra-1); transition: box-shadow .15s ease;
+}
+.bloque:hover { box-shadow: var(--sombra-2); z-index: 3; }
+.bloque[draggable=true] { cursor: grab; }
+.bloque .b-hora { font-size: 11px; color: var(--texto-suave); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.bloque .b-num { font-weight: 700; }
+.bloque .b-num small { font-weight: 500; color: var(--texto-tenue); text-transform: uppercase; font-size: 10px; letter-spacing: .04em; }
+.bloque .b-cliente { font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.bloque .zona { font-weight: 500; color: var(--texto-tenue); font-size: 11px; }
+.bloque .b-maquina, .bloque .b-nota { color: var(--texto-suave); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.bloque .b-nota { font-style: italic; }
+.bloque .chip-etiqueta { display: inline-block; font-size: 10px; padding: 1px 7px; margin-top: 2px; }
+.bloque.urgente { border-left-color: var(--error) !important; background: linear-gradient(90deg, var(--error-fondo) 0, var(--tarjeta) 48px); }
+.bloque.con-aviso { box-shadow: 0 0 0 2px var(--aviso); }
+.bloque.pasado { opacity: .62; }
+.bloque.ajeno { cursor: pointer; background: repeating-linear-gradient(135deg, var(--fondo-2) 0 8px, var(--tarjeta) 8px 16px); }
+.bloque.arrastrando { opacity: .35; }
+.b-tirador { position: absolute; left: 0; right: 0; bottom: 0; height: 7px; cursor: ns-resize; }
+.b-tirador:hover { background: var(--naranja-borde); }
+.bloque.compacto { position: static; display: flex; flex-wrap: wrap; align-items: baseline; gap: 0 6px; margin-bottom: 5px; padding: 4px 7px; }
+.bloque.compacto .b-cliente { flex: 1 1 100%; }
+
+.plan-semana { width: 100%; min-width: 980px; border-collapse: collapse; table-layout: fixed; font-size: 13px; }
+.plan-semana th, .plan-semana td { border-bottom: 1px solid var(--borde); border-left: 1px solid var(--borde); vertical-align: top; text-align: left; }
+.plan-semana thead th { position: sticky; top: 0; z-index: 5; background: var(--tarjeta); border-bottom: 1px solid var(--borde-fuerte); padding: 8px 10px; }
+.plan-semana tr > :first-child { width: 150px; position: sticky; left: 0; z-index: 4; background: var(--tarjeta); border-left: 0; padding: 8px 10px; font-weight: 500; }
+.plan-semana thead tr > :first-child { z-index: 6; }
+.plan-celda { padding: 6px; height: 84px; transition: var(--transicion); }
+.plan-semana .hoy { background: var(--naranja-suave); }
+.plan-semana .finde { background: var(--fondo); }
+.plan-semana thead th.hoy { box-shadow: inset 0 -3px 0 var(--naranja); }
+.enlace { background: none; border: 0; padding: 0; font: inherit; font-weight: 700; color: inherit; cursor: pointer; text-transform: capitalize; }
+.enlace:hover { text-decoration: underline; }
+@media (max-width: 1024px) {
+  .plan { grid-template-columns: 1fr; }
+  .bandeja { max-height: 42vh; }
+}
 
 .tarjeta {
   background: var(--tarjeta); border-radius: 10px; padding: 12px 14px;

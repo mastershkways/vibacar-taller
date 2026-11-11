@@ -43,6 +43,42 @@
   <div class="kanban" data-ref="columnas"></div>
 </template>
 
+<template id="tpl-planificador">
+  <div class="barra-vista">
+    <h2>Planificador</h2>
+    <span class="contador" data-ref="contador"></span>
+    <div class="plan-nav">
+      <b class="plan-rango" data-ref="titulo-rango"></b>
+      <button class="btn btn-pequeno" type="button" data-accion="anterior" aria-label="Anterior">‹</button>
+      <button class="btn btn-pequeno" type="button" data-accion="hoy">Hoy</button>
+      <button class="btn btn-pequeno" type="button" data-accion="siguiente" aria-label="Siguiente">›</button>
+      <input type="date" data-ref="fecha" aria-label="Ir a una fecha">
+    </div>
+    <div class="conmutador" data-ref="modo">
+      <button type="button" data-modo="dia">Día</button>
+      <button type="button" data-modo="semana">Semana</button>
+    </div>
+    <button class="btn btn-pequeno" data-accion="recargar">Actualizar</button>
+  </div>
+  <div class="plan">
+    <aside class="bandeja">
+      <div class="bandeja-cabecera">
+        <h3>Sin planificar <span data-ref="n-bandeja">0</span></h3>
+        <form data-ref="filtros-bandeja" autocomplete="off">
+          <input type="search" name="q" placeholder="Nº, cliente, máquina, síntoma" aria-label="Buscar en la bandeja">
+          <div class="bandeja-selects">
+            <select name="zona" data-ref="b-zona" aria-label="Zona"><option value="">Todas las zonas</option></select>
+            <select name="agrupar" aria-label="Agrupar"><option value="">Sin agrupar</option><option value="zona">Por zona</option><option value="cliente">Por cliente</option></select>
+          </div>
+          <label class="check"><input type="checkbox" name="pausadas"> Incluir pausadas (preplanificar)</label>
+        </form>
+      </div>
+      <div class="bandeja-lista" data-ref="lista-bandeja"></div>
+    </aside>
+    <section class="calendario" data-ref="calendario"></section>
+  </div>
+</template>
+
 <template id="tpl-misot">
   <div class="barra-vista misot-barra">
     <h2>Mis O.T.</h2>
@@ -407,6 +443,39 @@
     </div>
   </div>
 </template>
+<template id="tpl-bloque">
+  <div class="modal-fondo">
+    <div class="modal estrecho">
+      <div class="modal-cabecera">
+        <h2 data-ref="titulo"></h2>
+        <button class="cerrar" type="button" data-accion="cerrar" aria-label="Cerrar">×</button>
+      </div>
+      <div class="modal-cuerpo">
+        <div class="pista" data-ref="resumen"></div>
+        <div data-ref="avisos"></div>
+        <form data-ref="form">
+          <label>Técnico</label>
+          <select name="tecnico_id" required></select>
+          <div class="fila">
+            <div><label>Día</label><input type="date" name="dia" required></div>
+            <div><label>Hora de inicio</label><input type="time" name="hora_inicio" step="900" required></div>
+            <div><label>Duración</label><select name="duracion_min"></select></div>
+          </div>
+          <label>Nota para el técnico (opcional)</label>
+          <input type="text" name="nota" maxlength="500" autocomplete="off">
+          <div class="acciones">
+            <button class="btn btn-primario" type="submit" data-ref="guardar">Planificar</button>
+            <button class="btn" type="button" data-accion="cerrar">Cancelar</button>
+            <button class="btn" type="button" data-ref="ver-ot">Ver O.T.</button>
+            <button class="btn oculto" type="button" data-ref="partir" title="Añadir otro bloque a esta O.T. (otro día u otro técnico)">+ Otro bloque</button>
+            <button class="btn btn-peligro derecha oculto" type="button" data-ref="quitar">Quitar bloque</button>
+          </div>
+        </form>
+      </div>
+    </div>
+  </div>
+</template>
+
 <template id="tpl-cambio-estado">
   <div class="modal-fondo">
     <div class="modal estrecho">

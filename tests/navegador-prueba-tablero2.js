@@ -108,7 +108,7 @@ const setSelect = (p, selector, valor) => evaluar(p, `(() => { const s = documen
   const primera = await evaluar(p, `(() => { const t = document.querySelector('.columna[data-fase=pendiente_planificar] .tarjeta'); t.click(); return t.querySelector('.num').textContent.trim().split(' ')[0]; })()`);
   ok('detalle abierto desde la tarjeta', await esperarHasta(p, `!!document.querySelector('.modal [data-ref=transiciones] button')`));
   const botones = await evaluar(p, `[...document.querySelectorAll('.modal [data-ref=transiciones] button')].map(b => b.textContent)`);
-  ok('detalle: 5 botones de destino (→ Planificada … → Cerrada) y fila "Planificación: Sin planificar"', botones.length === 5 && botones[0] === '→ Planificada' && botones[4] === '→ Cerrada' && (await evaluar(p, `document.querySelector('.modal [data-ref=bloques]').textContent`)) === 'Sin planificar', botones.join(' | '));
+  ok('detalle: 5 botones de destino (→ Planificada … → Cerrada) y fila "Planificación: Sin planificar" con el botón Planificar', botones.length === 5 && botones[0] === '→ Planificada' && botones[4] === '→ Cerrada' && /^Sin planificar/.test(await evaluar(p, `document.querySelector('.modal [data-ref=bloques]').textContent`)) && (await evaluar(p, `document.querySelector('.modal [data-ref=bloques] [data-accion=planificar]')?.textContent`)) === 'Planificar', botones.join(' | '));
   await evaluar(p, `[...document.querySelectorAll('.modal [data-ref=transiciones] button')].find(b => b.textContent === '→ Pausada').click()`);
   ok('modal de cambio de estado con las dos preguntas (motivo + nota)', await esperarHasta(p, `(() => { const m = [...document.querySelectorAll('#modales .modal')].at(-1); return !!m && /→ Pausada/.test(m.querySelector('h2').textContent) && m.querySelector('[data-ref=opcion]').required && m.querySelector('[data-ref=opcion]').options.length === 6 && !!m.querySelector('[data-ref=nota]'); })()`));
   await evaluar(p, `(() => { const m = [...document.querySelectorAll('#modales .modal')].at(-1); m.querySelector('[data-ref=confirmar]').click(); })()`);
@@ -147,8 +147,9 @@ const setSelect = (p, selector, valor) => evaluar(p, `(() => { const s = documen
   // --- Operativo: home Tablero, cabecera con el nombre nuevo --------------------------------------------------------
   await salir(p);
   await entrar(p, 'operativo1', 'prueba123');
+  await evaluar(p, `location.hash = 'kanban'`); // su home es el Planificador (F4-02)
   await esperarHasta(p, `document.querySelectorAll('.columna').length === 5`);
-  ok('operativo: Tablero por defecto, cabecera "Operativo administrativo", verticales Pendiente/Planificada/En curso/Pausada resaltadas', (await evaluar(p, `document.querySelector('#nav button.activo')?.textContent`)) === 'Tablero' && (await evaluar(p, `document.querySelector('#usuario-rol').textContent`)) === 'Operativo administrativo' && (await columnas(p)).filter((c) => c.mia).length === 4);
+  ok('operativo: Tablero, cabecera "Operativo administrativo", verticales Pendiente/Planificada/En curso/Pausada resaltadas', (await evaluar(p, `document.querySelector('#nav button.activo')?.textContent`)) === 'Tablero' && (await evaluar(p, `document.querySelector('#usuario-rol').textContent`)) === 'Operativo administrativo' && (await columnas(p)).filter((c) => c.mia).length === 4);
   await captura(p, '06-operativo-tablero');
 
   p.cerrar();

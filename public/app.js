@@ -1,7 +1,8 @@
 // app.js — Gestión de Taller Vibacar. Interfaz de una sola página, sin frameworks.
 //
 // Arranque: GET /api/sesion + GET /api/estados → estado global `S` → vista según el rol.
-//   administrativo, responsable_st, operativo, gerencia → Tablero (verticales por estado) con polling cada 10 s (ETag / 304)
+//   responsable_st, operativo, gerencia → Planificador (calendario de bloques por técnico y día; F4-02)
+//   administrativo          → Tablero (verticales por estado) con polling cada 10 s (ETag / 304)
 //   tecnico, sat           → Mis O.T. (tablet: tarjetas y botones grandes)
 //   recambista              → Tablero (su vertical es Pausada); comercial, comercial_jefe → Listado (tabla)
 // Las vistas son <template> del index.html que se clonan en <main id="app">.
@@ -21,6 +22,8 @@ const S = {
   vista: null,
   kanban: { etag: null, datos: null, timer: null, cargando: false },
   tablero: { filtros: {} },  // filtros del Tablero (operario, zona, etiqueta, prioridad, texto, "solo mi vertical")
+  // Planificador (F4-02): modo dia | semana, fecha de referencia, datos del último GET, arrastre en curso y filtros de la bandeja
+  plan: { modo: 'dia', fecha: null, datos: null, etag: null, timer: null, cargando: false, pendiente: false, arrastre: null, redimension: false, recienArrastrado: false, vIni: 0, filtros: {} },
   listado: { pagina: 1, limite: 100 },
   clientes: { pagina: 1, limite: 50 },
   maquinas: { pagina: 1, limite: 50 },
@@ -304,6 +307,7 @@ function mostrarErrorAccion(e, contenedorAvisos, alRecargar = null) {
 // Arranque y navegación
 // ---------------------------------------------------------------------------
 const VISTAS = {
+  planificador: { titulo: 'Planificador', visible: () => puede('planificador.ver'), pintar: pintarPlanificador },
   kanban: { titulo: 'Tablero', visible: () => puede('kanban.ver'), pintar: pintarKanban },
   misot: { titulo: 'Mis O.T.', visible: () => S.sesion.alcance === 'asignadas', pintar: pintarMisOT },
   listado: { titulo: 'Listado', visible: () => puede('ot.ver'), pintar: pintarListado },
@@ -315,8 +319,10 @@ const VISTAS = {
 
 function vistaPorDefecto() {
   if (S.sesion.alcance === 'asignadas') return 'misot';
-  // F4-04: home por rol. Oficina y recambista entran en el Tablero (cada uno con su vertical resaltada); comerciales, en el Listado.
-  if (['administrativo', 'responsable_st', 'operativo', 'gerencia', 'recambista'].includes(S.sesion.usuario.rol) && puede('kanban.ver')) return 'kanban';
+  // Home por rol (F4-02): quien reparte el trabajo (responsable, operativo) y gerencia entran en el Planificador;
+  // administración y recambista, en el Tablero (cada uno con su vertical resaltada); comerciales, en el Listado.
+  if (['responsable_st', 'operativo', 'gerencia'].includes(S.sesion.usuario.rol) && puede('planificador.ver')) return 'planificador';
+  if (['administrativo', 'recambista'].includes(S.sesion.usuario.rol) && puede('kanban.ver')) return 'kanban';
   return 'listado';
 }
 
@@ -396,10 +402,12 @@ function alternarMenu(menu) {
   cerrarMenus();
   if (!abrir) return;
   menu.classList.add('abierto');
-  $('.menu-boton', menu).setAttribute('aria-expanded', 'true');
-  const r = $('.menu-boton', menu).getBoundingClientRect();
+  const boton = $('.menu-boton', menu);
+  boton.setAttribute('aria-expanded', 'true');
+  boton.scrollIntoView({ block: 'nearest', inline: 'nearest' }); // en pantallas estrechas el nav se desplaza y el botón puede quedar fuera
+  const r = boton.getBoundingClientRect();
   const lista = $('.menu-lista', menu);
-  lista.style.left = `${Math.round(r.left)}px`;
+  lista.style.left = `${Math.round(Math.max(8, Math.min(r.left, window.innerWidth - lista.offsetWidth - 8)))}px`; // siempre dentro de la pantalla
   lista.style.top = `${Math.round(r.bottom + 6)}px`;
 }
 function cerrarMenus() {
@@ -411,6 +419,7 @@ document.addEventListener('keydown', (e) => { if (e.key === 'Escape') cerrarMenu
 function mostrarVista(nombre) {
   if (!VISTAS[nombre] || !VISTAS[nombre].visible()) nombre = vistaPorDefecto();
   pararPolling();
+  pararPollingPlan();
   S.vista = nombre;
   for (const b of $$('#nav button[data-vista]')) b.classList.toggle('activo', b.dataset.vista === nombre);
   for (const m of $$('#nav .menu')) m.classList.toggle('activo', !!$(`button[data-vista="${nombre}"]`, m));
@@ -453,6 +462,7 @@ async function iniciar() {
   pintarCabecera();
   window.addEventListener('hashchange', enrutar);
   document.addEventListener('visibilitychange', () => {
+    if (S.vista === 'planificador' && !document.hidden) recargarPlan(false);
     if (S.vista !== 'kanban') return;
     if (document.hidden) pararPolling(); else { cargarKanban(); arrancarPolling(); }
   });
@@ -589,7 +599,9 @@ function tarjetaKanban(o) {
     ${o.sintoma ? `<div class="sintoma" title="${esc(o.sintoma)}">${esc(o.sintoma)}</div>` : ''}
     ${o.etiqueta ? `<div class="etiquetas">${chipEtiqueta(o)}</div>` : ''}
     ${nombreTecnico(o) ? `<div class="tecnico">${esc(nombreTecnico(o))}</div>` : ''}
-    ${o.fecha_prevista ? `<div class="prevista">Prevista ${esc(fecha(o.fecha_prevista))}</div>` : ''}`;
+    ${o.proximo_bloque
+      ? `<div class="prevista proximo">📅 ${esc(fecha(o.proximo_bloque))}${o.proximo_tecnico ? ' · ' + esc(o.proximo_tecnico) : ''}${o.bloques_futuros > 1 ? ` <b title="Bloques planificados">+${o.bloques_futuros - 1}</b>` : ''}</div>`
+      : (o.fecha_prevista ? `<div class="prevista">Prevista ${esc(fecha(o.fecha_prevista))}</div>` : '')}`;
   el.onclick = () => abrirDetalle(o.id);
   if (destinosDesde(o).length) {
     el.draggable = true;
@@ -642,6 +654,552 @@ function prepararSoltar(col) {
     if (ok) { const tarjeta = $(`.tarjeta[data-id="${id}"]`, app); if (tarjeta) ref('cuerpo', col).prepend(tarjeta); }
     cargarKanban();
   });
+}
+
+// ---------------------------------------------------------------------------
+// Vista: Planificador (F4-02 + F4-03). Calendario Día / Semana con bloques por técnico y bandeja de O.T. sin planificar.
+// El Tablero dice en qué punto está cada O.T. y por qué; el Planificador, quién la hace y cuándo. Aquí el estado solo se
+// mueve entre "pendiente de planificar" y "planificada" (lo decide el servidor al crear o quitar bloques).
+// ---------------------------------------------------------------------------
+const PLAN_POLLING_MS = 15000;
+const PX_HORA = 56;                 // alto de una hora en la vista Día
+const PASO_MIN = 15;                // el arrastre se ajusta a cuartos de hora
+const DURACIONES = [30, 60, 90, 120, 150, 180, 240, 300, 360, 420, 480];
+const DIAS_SEMANA = ['lun', 'mar', 'mié', 'jue', 'vie', 'sáb', 'dom'];
+const PROPUESTAS = { repuesto: 'Repuesto recibido', presupuesto: 'Presupuesto aceptado', ok_presupuesto: 'Presupuesto aceptado', num_pedido: 'Nº de pedido recibido', espera_cliente: 'Cliente disponible' };
+
+const dosDigitos = (n) => String(n).padStart(2, '0');
+const fechaLocal = (iso) => { const [a, m, d] = iso.split('-').map(Number); return new Date(a, m - 1, d); };
+const isoDe = (f) => `${f.getFullYear()}-${dosDigitos(f.getMonth() + 1)}-${dosDigitos(f.getDate())}`;
+const hoyISO = () => isoDe(new Date());
+const sumarDias = (iso, n) => { const f = fechaLocal(iso); f.setDate(f.getDate() + n); return isoDe(f); };
+const lunesDe = (iso) => sumarDias(iso, -((fechaLocal(iso).getDay() + 6) % 7));
+const diaLargo = (iso) => { const t = fechaLocal(iso).toLocaleDateString('es-ES', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' }); return t.charAt(0).toUpperCase() + t.slice(1); };
+const minutosDe = (hhmm) => { const [h, m] = hhmm.split(':').map(Number); return h * 60 + m; };
+const horaDe = (min) => `${dosDigitos(Math.floor(min / 60))}:${dosDigitos(min % 60)}`;
+const textoDuracion = (min) => `${(min / 60).toLocaleString('es-ES', { maximumFractionDigits: 2 })} h`;
+const textoPropuesta = (o) => (o.propuesta ? (PROPUESTAS[o.propuesta] || 'Lista para planificar') : '');
+
+function rangoPlan() {
+  if (S.plan.modo === 'semana') { const lunes = lunesDe(S.plan.fecha); return [lunes, sumarDias(lunes, 6)]; }
+  return [S.plan.fecha, S.plan.fecha];
+}
+
+function pararPollingPlan() {
+  if (S.plan.timer) clearInterval(S.plan.timer);
+  S.plan.timer = null;
+}
+
+function pintarPlanificador() {
+  if (!S.plan.fecha) S.plan.fecha = hoyISO();
+  const mover = (n) => { S.plan.fecha = sumarDias(S.plan.fecha, n * (S.plan.modo === 'semana' ? 7 : 1)); recargarPlan(true); };
+  $('[data-accion="anterior"]', app).onclick = () => mover(-1);
+  $('[data-accion="siguiente"]', app).onclick = () => mover(1);
+  $('[data-accion="hoy"]', app).onclick = () => { S.plan.fecha = hoyISO(); recargarPlan(true); };
+  $('[data-accion="recargar"]', app).onclick = () => recargarPlan(true);
+  const inputFecha = ref('fecha', app);
+  inputFecha.onchange = () => { if (inputFecha.value) { S.plan.fecha = inputFecha.value; recargarPlan(true); } };
+  for (const b of $$('[data-modo]', app)) b.onclick = () => { S.plan.modo = b.dataset.modo; recargarPlan(true); };
+
+  const form = ref('filtros-bandeja', app);
+  const f = S.plan.filtros;
+  form.elements.q.value = f.q || '';
+  form.elements.agrupar.value = f.agrupar || '';
+  form.elements.pausadas.checked = !!f.pausadas;
+  let temporizador = null;
+  form.oninput = (e) => {
+    S.plan.filtros = { q: form.elements.q.value, zona: form.elements.zona.value, agrupar: form.elements.agrupar.value, pausadas: form.elements.pausadas.checked };
+    if (e.target.name === 'pausadas') recargarPlan(true);
+    else if (e.target.name === 'q') { clearTimeout(temporizador); temporizador = setTimeout(pintarBandeja, 200); }
+    else pintarBandeja();
+  };
+  form.onsubmit = (e) => e.preventDefault();
+  if (puede('planificador.editar')) prepararSoltarBandeja(ref('lista-bandeja', app));
+  S.plan.datos = null;
+  recargarPlan(true);
+  pararPollingPlan();
+  S.plan.timer = setInterval(() => recargarPlan(false), PLAN_POLLING_MS);
+}
+
+// forzar = true: lo pide el usuario o acaba de cambiar algo (ignora el ETag). El polling no repinta bajo un arrastre o un modal.
+async function recargarPlan(forzar) {
+  if (S.vista !== 'planificador') return;
+  if (S.plan.cargando) { if (forzar) S.plan.pendiente = true; return; }
+  if (!forzar && (document.hidden || S.plan.arrastre || S.plan.redimension || $('#modales .modal-fondo'))) return;
+  S.plan.cargando = true;
+  if (forzar) S.plan.etag = null;
+  const [desde, hasta] = rangoPlan();
+  try {
+    const datos = await api(`/api/planificador?desde=${desde}&hasta=${hasta}${S.plan.filtros.pausadas ? '&pausadas=1' : ''}`, { headers: S.plan.etag ? { 'If-None-Match': S.plan.etag } : {} });
+    if (!datos._304) {
+      S.plan.etag = datos._etag;
+      S.plan.datos = datos;
+      pintarPlan();
+    }
+  } catch (e) {
+    if (e.status !== 401) toast(`Planificador: ${e.message}`, 'error');
+  } finally {
+    S.plan.cargando = false;
+    if (S.plan.pendiente) { S.plan.pendiente = false; recargarPlan(true); }
+  }
+}
+
+function indiceAvisos(d) {
+  const por = new Map();
+  for (const a of d.avisos) { const k = `${a.tecnico_id}|${a.dia}`; if (!por.has(k)) por.set(k, []); por.get(k).push(a); }
+  return { por, ids: new Set(d.avisos.flatMap((a) => a.bloques)) };
+}
+
+function chipsAviso(lista) {
+  const nombre = { horas: 'horas', zonas: 'zonas', solape: 'solape' };
+  return lista.map((a) => `<span class="chip chip-aviso" data-aviso="${esc(a.tipo)}" title="${esc(a.texto)}">⚠ ${nombre[a.tipo] || esc(a.tipo)}</span>`).join(' ');
+}
+
+function pintarPlan() {
+  const d = S.plan.datos;
+  if (!d || S.vista !== 'planificador') return;
+  ref('fecha', app).value = S.plan.fecha;
+  for (const b of $$('[data-modo]', app)) b.classList.toggle('activo', b.dataset.modo === S.plan.modo);
+  ref('titulo-rango', app).textContent = S.plan.modo === 'semana' ? `Semana del ${fecha(d.desde)} al ${fecha(d.hasta)}` : diaLargo(d.desde);
+  const total = d.bloques.reduce((n, b) => n + b.duracion_min, 0);
+  ref('contador', app).textContent = `${d.bloques.length} bloque${d.bloques.length === 1 ? '' : 's'} · ${textoDuracion(total)}${d.avisos.length ? ` · ${d.avisos.length} aviso${d.avisos.length === 1 ? '' : 's'}` : ''}`;
+  pintarBandeja();
+  const cal = ref('calendario', app);
+  const [arriba, izquierda] = [cal.scrollTop, cal.scrollLeft];
+  cal.innerHTML = '';
+  if (!d.tecnicos.length) {
+    cal.innerHTML = '<div class="vacio">No hay técnicos activos. Crea en Usuarios los técnicos internos y los SAT externos (con su código de operario de Karve) y aparecerá una columna por cada uno.</div>';
+    return;
+  }
+  if (S.plan.modo === 'semana') pintarSemana(cal, d); else pintarDia(cal, d);
+  cal.scrollTop = arriba;
+  cal.scrollLeft = izquierda;
+}
+
+// --- Bandeja -------------------------------------------------------------------------------------------------------------
+function pintarBandeja() {
+  const d = S.plan.datos;
+  if (!d || S.vista !== 'planificador') return;
+  const f = S.plan.filtros;
+  const selZona = ref('b-zona', app);
+  if (selZona.options.length <= 1) {
+    const zonas = [...new Set(d.bandeja.map((o) => o.cliente_zona).filter(Boolean))].sort((x, y) => x.localeCompare(y, 'es'));
+    for (const z of zonas) selZona.insertAdjacentHTML('beforeend', `<option value="${esc(z)}">${esc(z)}</option>`);
+    if (f.zona) selZona.value = f.zona;
+  }
+  const q = (f.q || '').toLowerCase();
+  const lista = d.bandeja.filter((o) => (!q || `${o.numero} ${o.cliente_nombre} ${textoMaquina(o)} ${o.sintoma || ''} ${o.karve_operario || ''}`.toLowerCase().includes(q)) && (!f.zona || (o.cliente_zona || '') === f.zona));
+  ref('n-bandeja', app).textContent = lista.length === d.bandeja_total ? String(d.bandeja_total) : `${lista.length}/${d.bandeja_total}`;
+  const cont = ref('lista-bandeja', app);
+  const arriba = cont.scrollTop;
+  cont.innerHTML = '';
+  if (!lista.length) { cont.innerHTML = '<div class="vacio">Nada pendiente de planificar.</div>'; return; }
+  const porCliente = {};
+  for (const o of d.bandeja) porCliente[o.cliente_id] = (porCliente[o.cliente_id] || 0) + 1;
+  const titulo = (t, n) => cont.insertAdjacentHTML('beforeend', `<div class="bandeja-grupo">${esc(t)} <span>${n}</span></div>`);
+  const propuestas = lista.filter((o) => o.propuesta);
+  const resto = lista.filter((o) => !o.propuesta);
+  if (propuestas.length) { titulo('Listas para planificar', propuestas.length); for (const o of propuestas) cont.append(tarjetaBandeja(o, porCliente)); }
+  if (f.agrupar) {
+    const clave = (o) => (f.agrupar === 'zona' ? (o.cliente_zona || 'Sin zona') : o.cliente_nombre);
+    const grupos = new Map();
+    for (const o of resto) { const k = clave(o); if (!grupos.has(k)) grupos.set(k, []); grupos.get(k).push(o); }
+    for (const [k, os] of [...grupos.entries()].sort((x, y) => y[1].length - x[1].length || x[0].localeCompare(y[0], 'es'))) { titulo(k, os.length); for (const o of os) cont.append(tarjetaBandeja(o, porCliente)); }
+  } else {
+    if (propuestas.length && resto.length) titulo('Resto', resto.length);
+    for (const o of resto) cont.append(tarjetaBandeja(o, porCliente));
+  }
+  if (d.bandeja_total > d.bandeja.length) cont.insertAdjacentHTML('beforeend', `<div class="pista">Se muestran las ${d.bandeja.length} primeras de ${d.bandeja_total}. Usa el buscador o la zona para acotar.</div>`);
+  cont.scrollTop = arriba;
+}
+
+function tarjetaBandeja(o, porCliente) {
+  const el = document.createElement('div');
+  el.className = `tarjeta tarjeta-bandeja${o.prioridad === 1 ? ' urgente' : ''}${o.propuesta ? ' propuesta' : ''}`;
+  el.dataset.id = o.id;
+  el.style.borderLeftColor = o.estado_color || '#6b7280';
+  const otras = (porCliente[o.cliente_id] || 1) - 1;
+  const karve = [o.fecha_prevista ? `Prevista ${fecha(o.fecha_prevista)}` : '', o.karve_operario ? `${o.karve_operario} (Karve)` : ''].filter(Boolean).join(' · ');
+  el.innerHTML = `
+    <div class="num">${chipPrioridad(o.prioridad)}${esc(o.numero)} <small>${o.prioridad === 1 ? '<span class="urgente-texto">Urgente</span> · ' : ''}${esc(o.tipo)}</small></div>
+    <div class="cliente">${esc(o.cliente_nombre)}${o.cliente_zona ? ` <small class="zona">${esc(o.cliente_zona)}</small>` : ''}</div>
+    ${o.maquina_id ? `<div class="maquina">${esc(textoMaquina(o))}</div>` : ''}
+    ${o.sintoma ? `<div class="sintoma" title="${esc(o.sintoma)}">${esc(o.sintoma)}</div>` : ''}
+    <div class="etiquetas">${o.propuesta ? `<span class="chip chip-ok" data-propuesta="${esc(o.propuesta)}">${esc(textoPropuesta(o))}</span>` : ''}${o.estado !== 'pendiente_planificar' ? chipEstado(o) : ''}${chipEtiqueta(o)}${o.bloque_vencido ? '<span class="chip chip-claro" title="Su último bloque ya pasó y la O.T. sigue abierta">bloque vencido</span>' : ''}</div>
+    ${o.propuesta && otras > 0 ? `<div class="prevista">+${otras} O.T. del mismo cliente en la bandeja</div>` : ''}
+    ${karve ? `<div class="prevista">${esc(karve)}</div>` : ''}`;
+  el.onclick = () => abrirDetalle(o.id);
+  if (puede('planificador.editar')) {
+    el.draggable = true;
+    el.addEventListener('dragstart', (e) => {
+      if (e.dataTransfer) { e.dataTransfer.setData('text/plain', `ot:${o.id}`); e.dataTransfer.effectAllowed = 'move'; }
+      S.plan.arrastre = { tipo: 'ot', ot: o, duracion: (S.plan.datos && S.plan.datos.duracion_defecto) || 120, desfase: 0 };
+      setTimeout(() => el.classList.add('arrastrando'), 0);
+      document.body.classList.add('plan-arrastrando');
+    });
+    el.addEventListener('dragend', () => finArrastrePlan(el));
+  }
+  return el;
+}
+
+function finArrastrePlan(el) {
+  if (el) el.classList.remove('arrastrando');
+  S.plan.arrastre = null;
+  document.body.classList.remove('plan-arrastrando');
+  quitarSombra();
+  for (const z of $$('.soltar-aqui', app)) z.classList.remove('soltar-aqui');
+}
+
+function quitarSombra() { for (const s of $$('.plan-sombra', app)) s.remove(); }
+
+// Soltar un bloque del calendario sobre la bandeja = quitarlo (con confirmación).
+function prepararSoltarBandeja(lista) {
+  lista.addEventListener('dragover', (e) => { const a = S.plan.arrastre; if (!a || a.tipo !== 'bloque') return; e.preventDefault(); lista.classList.add('soltar-aqui'); });
+  lista.addEventListener('dragleave', (e) => { if (!lista.contains(e.relatedTarget)) lista.classList.remove('soltar-aqui'); });
+  lista.addEventListener('drop', async (e) => {
+    const a = S.plan.arrastre;
+    if (!a || a.tipo !== 'bloque') return;
+    e.preventDefault();
+    finArrastrePlan(null);
+    await quitarBloque(a.bloque);
+  });
+}
+
+// --- Bloques ---------------------------------------------------------------------------------------------------------------
+function elementoBloque(b, { conAviso = false, editable = false, compacto = false } = {}) {
+  const el = document.createElement('div');
+  const fin = minutosDe(b.hora_inicio) + b.duracion_min;
+  el.className = `bloque${compacto ? ' compacto' : ''}${b.prioridad === 1 ? ' urgente' : ''}${b.fuera_alcance ? ' ajeno' : ''}${conAviso ? ' con-aviso' : ''}${b.dia < S.plan.datos.hoy ? ' pasado' : ''}`;
+  el.dataset.bloque = b.id;
+  el.dataset.ot = b.ot_id;
+  el.style.borderLeftColor = b.estado_color || '#6b7280';
+  el.title = `${b.numero} · ${b.cliente_nombre}${b.sintoma ? ' · ' + b.sintoma : ''}${b.nota ? ' · Nota: ' + b.nota : ''}`;
+  el.innerHTML = compacto
+    ? `<span class="b-hora">${b.hora_inicio} · ${textoDuracion(b.duracion_min)}</span><b class="b-num">${esc(b.numero)}</b><span class="b-cliente">${esc(b.cliente_nombre)}</span>${b.cliente_zona ? `<small class="zona">${esc(b.cliente_zona)}</small>` : ''}`
+    : `<div class="b-hora">${b.hora_inicio}–${horaDe(fin)} · ${textoDuracion(b.duracion_min)}${b.prioridad === 1 ? ' · <span class="urgente-texto">Urgente</span>' : ''}</div>
+       <div class="b-num">${esc(b.numero)}${b.estado !== 'planificada' ? ` <small>${esc(b.estado_nombre)}</small>` : ''}</div>
+       <div class="b-cliente">${esc(b.cliente_nombre)}${b.cliente_zona ? ` <small class="zona">${esc(b.cliente_zona)}</small>` : ''}</div>
+       ${b.maquina_id ? `<div class="b-maquina">${esc(textoMaquina(b))}</div>` : ''}
+       ${b.etiqueta ? chipEtiqueta(b) : ''}${b.nota ? `<div class="b-nota">${esc(b.nota)}</div>` : ''}`;
+  el.onclick = () => { if (!S.plan.recienArrastrado) abrirBloque({ bloque: b }); };
+  if (editable && !b.fuera_alcance) {
+    el.draggable = true;
+    el.addEventListener('dragstart', (e) => {
+      if (S.plan.redimension) { e.preventDefault(); return; }
+      if (e.dataTransfer) { e.dataTransfer.setData('text/plain', `bloque:${b.id}`); e.dataTransfer.effectAllowed = 'move'; }
+      const r = el.getBoundingClientRect();
+      S.plan.arrastre = { tipo: 'bloque', bloque: b, duracion: b.duracion_min, desfase: compacto ? 0 : Math.max(0, Math.round(((e.clientY - r.top) / PX_HORA) * 60)) };
+      setTimeout(() => el.classList.add('arrastrando'), 0);
+      document.body.classList.add('plan-arrastrando');
+    });
+    el.addEventListener('dragend', () => finArrastrePlan(el));
+  }
+  return el;
+}
+
+// Bloques que se pisan en la misma columna: se reparten en carriles para que se vean todos.
+function repartirCarriles(bloques) {
+  const orden = [...bloques].sort((x, y) => minutosDe(x.hora_inicio) - minutosDe(y.hora_inicio) || x.id - y.id);
+  const salida = [];
+  let grupo = [];
+  let finGrupo = -1;
+  const cerrar = () => {
+    const carriles = Math.max(...grupo.map((g) => g.carril)) + 1;
+    for (const g of grupo) salida.push({ b: g.b, carril: g.carril, carriles });
+    grupo = [];
+    finGrupo = -1;
+  };
+  for (const b of orden) {
+    const ini = minutosDe(b.hora_inicio);
+    const fin = ini + b.duracion_min;
+    if (grupo.length && ini >= finGrupo) cerrar();
+    const ocupados = new Set(grupo.filter((g) => g.fin > ini).map((g) => g.carril));
+    let carril = 0;
+    while (ocupados.has(carril)) carril++;
+    grupo.push({ b, carril, fin });
+    finGrupo = Math.max(finGrupo, fin);
+  }
+  if (grupo.length) cerrar();
+  return salida;
+}
+
+// Tirador inferior del bloque (vista Día): alarga o acorta en tramos de 15 minutos.
+function ponerTirador(el, b) {
+  const t = document.createElement('div');
+  t.className = 'b-tirador';
+  t.title = 'Arrastra para cambiar la duración';
+  t.addEventListener('mousedown', (e) => e.preventDefault()); // que no empiece el arrastre del bloque
+  t.addEventListener('click', (e) => e.stopPropagation());
+  t.addEventListener('pointerdown', (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    S.plan.redimension = true;
+    const arriba = el.getBoundingClientRect().top;
+    const inicio = minutosDe(b.hora_inicio);
+    let dur = b.duracion_min;
+    const mover = (ev) => {
+      dur = Math.round((((ev.clientY - arriba) / PX_HORA) * 60) / PASO_MIN) * PASO_MIN;
+      dur = Math.max(PASO_MIN, Math.min(dur, 24 * 60 - inicio, 720));
+      el.style.height = `${(dur / 60) * PX_HORA - 2}px`;
+      const h = $('.b-hora', el);
+      if (h) h.textContent = `${b.hora_inicio}–${horaDe(inicio + dur)} · ${textoDuracion(dur)}`;
+    };
+    const soltar = async () => {
+      document.removeEventListener('pointermove', mover);
+      document.removeEventListener('pointerup', soltar);
+      S.plan.recienArrastrado = true;
+      setTimeout(() => { S.plan.recienArrastrado = false; }, 200);
+      S.plan.redimension = false;
+      if (dur !== b.duracion_min) await moverBloque(b, { duracion_min: dur }, `ahora dura ${textoDuracion(dur)}`);
+    };
+    document.addEventListener('pointermove', mover);
+    document.addEventListener('pointerup', soltar);
+  });
+  el.append(t);
+}
+
+async function moverBloque(b, body, mensaje) {
+  try {
+    const r = await api(`/api/ot/${b.ot_id}/bloques/${b.id}`, { method: 'PUT', body });
+    toast(`${b.numero}: ${mensaje}`, 'ok');
+    for (const av of r.avisos || []) toast(av.texto, 'aviso');
+  } catch (e) {
+    if (e.status !== 401) toast(e.message, 'error');
+  }
+  recargarPlan(true);
+}
+
+async function quitarBloque(b) {
+  const r = await elegir(`¿Quitar el bloque de ${b.numero} (${fecha(b.dia)} ${b.hora_inicio})? Si era su único bloque futuro, la O.T. vuelve a la bandeja.`, [{ etiqueta: 'Sí, quitar', valor: 1, color: '#dc2626' }]);
+  if (!r) return false;
+  try {
+    await api(`/api/ot/${b.ot_id}/bloques/${b.id}`, { method: 'DELETE' });
+    toast(`${b.numero}: bloque quitado`, 'ok');
+    recargarPlan(true);
+    return true;
+  } catch (e) {
+    if (e.status !== 401) toast(e.message, 'error');
+    return false;
+  }
+}
+
+// Lo que se suelta en el calendario: una O.T. de la bandeja (abre el mini-modal con la celda elegida) o un bloque (se mueve ya).
+function soltarEnPlan(a, destino) {
+  finArrastrePlan(null);
+  if (a.tipo === 'ot') { abrirBloque({ ot: a.ot, ...destino }); return; }
+  const b = a.bloque;
+  const body = {};
+  if (destino.tecnico_id !== b.tecnico_id) body.tecnico_id = destino.tecnico_id;
+  if (destino.dia !== b.dia) body.dia = destino.dia;
+  if (destino.hora_inicio && destino.hora_inicio !== b.hora_inicio) body.hora_inicio = destino.hora_inicio;
+  if (!Object.keys(body).length) return;
+  const tecnico = (S.plan.datos.tecnicos.find((t) => t.id === destino.tecnico_id) || {}).nombre || '';
+  moverBloque(b, body, `movido al ${fecha(destino.dia)} ${destino.hora_inicio || b.hora_inicio}${tecnico ? ' · ' + tecnico : ''}`);
+}
+
+// --- Vista Día: una columna por técnico, eje de horas, alto proporcional a la duración ----------------------------------------
+function minutoEnColumna(col, clientY) {
+  const a = S.plan.arrastre;
+  const r = col.getBoundingClientRect();
+  let min = S.plan.vIni + ((clientY - r.top) / PX_HORA) * 60 - (a.desfase || 0);
+  min = Math.round(min / PASO_MIN) * PASO_MIN;
+  return Math.max(0, Math.min(24 * 60 - a.duracion, min));
+}
+
+function prepararSoltarColumna(col) {
+  col.addEventListener('dragover', (e) => {
+    const a = S.plan.arrastre;
+    if (!a) return;
+    e.preventDefault();
+    if (e.dataTransfer) e.dataTransfer.dropEffect = 'move';
+    const min = minutoEnColumna(col, e.clientY);
+    let s = $('.plan-sombra', col);
+    if (!s) { quitarSombra(); s = document.createElement('div'); s.className = 'plan-sombra'; col.append(s); }
+    s.style.top = `${((min - S.plan.vIni) / 60) * PX_HORA}px`;
+    s.style.height = `${(a.duracion / 60) * PX_HORA - 2}px`;
+    s.textContent = `${horaDe(min)}–${horaDe(min + a.duracion)}`;
+  });
+  col.addEventListener('dragleave', (e) => { if (!col.contains(e.relatedTarget)) quitarSombra(); });
+  col.addEventListener('drop', (e) => {
+    const a = S.plan.arrastre;
+    if (!a) return;
+    e.preventDefault();
+    soltarEnPlan(a, { tecnico_id: Number(col.dataset.tecnico), dia: col.dataset.dia, hora_inicio: horaDe(minutoEnColumna(col, e.clientY)) });
+  });
+}
+
+function pintarDia(cal, d) {
+  const dia = d.desde;
+  const { por, ids } = indiceAvisos(d);
+  const editable = puede('planificador.editar');
+  // Rango visible: la jornada del .env, ampliada si hay bloques fuera de ella.
+  let vIni = minutosDe(d.jornada.inicio);
+  let vFin = minutosDe(d.jornada.fin);
+  for (const b of d.bloques) {
+    const ini = minutosDe(b.hora_inicio);
+    vIni = Math.min(vIni, Math.floor(ini / 60) * 60);
+    vFin = Math.max(vFin, Math.ceil((ini + b.duracion_min) / 60) * 60);
+  }
+  S.plan.vIni = vIni;
+  const alto = ((vFin - vIni) / 60) * PX_HORA;
+  const rejilla = document.createElement('div');
+  rejilla.className = 'plan-dia';
+  rejilla.style.gridTemplateColumns = `52px repeat(${d.tecnicos.length}, minmax(190px, 1fr))`;
+  rejilla.insertAdjacentHTML('beforeend', '<div class="plan-esquina"></div>');
+  for (const t of d.tecnicos) {
+    const min = d.bloques.filter((b) => b.tecnico_id === t.id).reduce((n, b) => n + b.duracion_min, 0);
+    const avisos = por.get(`${t.id}|${dia}`) || [];
+    rejilla.insertAdjacentHTML('beforeend', `<div class="plan-cab${avisos.length ? ' con-aviso' : ''}" data-tecnico="${t.id}"><b>${esc(t.nombre)}</b>${t.rol === 'sat' ? ' <span class="chip chip-azul">SAT</span>' : ''}${t.inactivo ? ' <span class="chip chip-claro">de baja</span>' : ''}<div class="plan-carga${min > d.jornada.horas_dia * 60 ? ' sobre' : ''}">${textoDuracion(min)} / ${d.jornada.horas_dia} h ${chipsAviso(avisos)}</div></div>`);
+  }
+  const horas = document.createElement('div');
+  horas.className = 'plan-horas';
+  horas.style.height = `${alto}px`;
+  for (let m = vIni; m < vFin; m += 60) horas.insertAdjacentHTML('beforeend', `<span style="top:${((m - vIni) / 60) * PX_HORA}px">${horaDe(m)}</span>`);
+  rejilla.append(horas);
+  const ahoraMin = new Date().getHours() * 60 + new Date().getMinutes();
+  for (const t of d.tecnicos) {
+    const col = document.createElement('div');
+    col.className = 'plan-col';
+    col.dataset.tecnico = t.id;
+    col.dataset.dia = dia;
+    col.style.height = `${alto}px`;
+    col.style.backgroundSize = `100% ${PX_HORA}px`;
+    for (const { b, carril, carriles } of repartirCarriles(d.bloques.filter((x) => x.tecnico_id === t.id))) {
+      const el = elementoBloque(b, { conAviso: ids.has(b.id), editable });
+      el.style.top = `${((minutosDe(b.hora_inicio) - vIni) / 60) * PX_HORA}px`;
+      el.style.height = `${Math.max(20, (b.duracion_min / 60) * PX_HORA - 2)}px`;
+      el.style.left = `calc(${(carril / carriles) * 100}% + 2px)`;
+      el.style.width = `calc(${100 / carriles}% - 4px)`;
+      if (editable && !b.fuera_alcance) ponerTirador(el, b);
+      col.append(el);
+    }
+    if (dia === d.hoy && ahoraMin >= vIni && ahoraMin <= vFin) col.insertAdjacentHTML('beforeend', `<div class="plan-ahora" style="top:${((ahoraMin - vIni) / 60) * PX_HORA}px"></div>`);
+    if (editable) prepararSoltarColumna(col);
+    rejilla.append(col);
+  }
+  cal.append(rejilla);
+}
+
+// --- Vista Semana: una fila por técnico, una celda por día, tarjetas compactas -----------------------------------------------
+function siguienteHueco(tecnicoId, dia) {
+  const d = S.plan.datos;
+  let fin = Math.max(minutosDe('08:00'), minutosDe(d.jornada.inicio));
+  for (const b of d.bloques) if (b.tecnico_id === tecnicoId && b.dia === dia) fin = Math.max(fin, minutosDe(b.hora_inicio) + b.duracion_min);
+  return horaDe(Math.min(fin, 24 * 60 - d.duracion_defecto));
+}
+
+function prepararSoltarCelda(td) {
+  td.addEventListener('dragover', (e) => { if (!S.plan.arrastre) return; e.preventDefault(); td.classList.add('soltar-aqui'); });
+  td.addEventListener('dragleave', (e) => { if (!td.contains(e.relatedTarget)) td.classList.remove('soltar-aqui'); });
+  td.addEventListener('drop', (e) => {
+    const a = S.plan.arrastre;
+    if (!a) return;
+    e.preventDefault();
+    const tecnicoId = Number(td.dataset.tecnico);
+    const dia = td.dataset.dia;
+    soltarEnPlan(a, { tecnico_id: tecnicoId, dia, hora_inicio: a.tipo === 'ot' ? siguienteHueco(tecnicoId, dia) : null });
+  });
+}
+
+function pintarSemana(cal, d) {
+  const { por, ids } = indiceAvisos(d);
+  const editable = puede('planificador.editar');
+  const dias = Array.from({ length: 7 }, (_, i) => sumarDias(d.desde, i));
+  const tabla = document.createElement('table');
+  tabla.className = 'plan-semana';
+  tabla.innerHTML = `<thead><tr><th class="plan-esquina">Técnico</th>${dias.map((dia, i) => `<th data-dia="${dia}" class="${dia === d.hoy ? 'hoy' : ''}${i > 4 ? ' finde' : ''}"><button type="button" class="enlace" data-ir="${dia}" title="Ver este día">${DIAS_SEMANA[i]} ${Number(dia.slice(8))}/${Number(dia.slice(5, 7))}</button></th>`).join('')}</tr></thead><tbody></tbody>`;
+  const tbody = $('tbody', tabla);
+  for (const t of d.tecnicos) {
+    const tr = document.createElement('tr');
+    tr.dataset.tecnico = t.id;
+    const minSemana = d.bloques.filter((b) => b.tecnico_id === t.id).reduce((n, b) => n + b.duracion_min, 0);
+    tr.innerHTML = `<th><b>${esc(t.nombre)}</b>${t.rol === 'sat' ? ' <span class="chip chip-azul">SAT</span>' : ''}${t.inactivo ? ' <span class="chip chip-claro">de baja</span>' : ''}<div class="plan-carga">${textoDuracion(minSemana)} en la semana</div></th>`;
+    dias.forEach((dia, i) => {
+      const td = document.createElement('td');
+      td.className = `plan-celda${dia === d.hoy ? ' hoy' : ''}${i > 4 ? ' finde' : ''}`;
+      td.dataset.tecnico = t.id;
+      td.dataset.dia = dia;
+      const suyos = d.bloques.filter((b) => b.tecnico_id === t.id && b.dia === dia);
+      for (const b of suyos) td.append(elementoBloque(b, { conAviso: ids.has(b.id), editable, compacto: true }));
+      if (suyos.length) {
+        const min = suyos.reduce((n, b) => n + b.duracion_min, 0);
+        td.insertAdjacentHTML('beforeend', `<div class="plan-carga${min > d.jornada.horas_dia * 60 ? ' sobre' : ''}">${textoDuracion(min)} ${chipsAviso(por.get(`${t.id}|${dia}`) || [])}</div>`);
+      }
+      if (editable) prepararSoltarCelda(td);
+      tr.append(td);
+    });
+    tbody.append(tr);
+  }
+  for (const b of $$('[data-ir]', tabla)) b.onclick = () => { S.plan.fecha = b.dataset.ir; S.plan.modo = 'dia'; recargarPlan(true); };
+  cal.append(tabla);
+}
+
+// --- Mini-modal de bloque: planificar una O.T. (de la bandeja, del detalle o "+ Otro bloque") o editar/quitar un bloque -----------
+async function abrirBloque({ ot = null, bloque = null, tecnico_id = null, dia = null, hora_inicio = null, duracion_min = null, alTerminar = null } = {}) {
+  const o = bloque || ot;
+  const otId = bloque ? bloque.ot_id : ot.id;
+  const editable = puede('planificador.editar') && !(bloque && bloque.fuera_alcance);
+  const enPlan = S.vista === 'planificador' && S.plan.datos;
+  let tecnicos = [];
+  try { tecnicos = enPlan ? S.plan.datos.tecnicos.filter((t) => !t.inactivo) : await cargarTecnicos(); }
+  catch (e) { if (e.status !== 401) toast(e.message, 'error'); return; }
+  const nodo = tpl('tpl-bloque');
+  const form = ref('form', nodo);
+  const avisos = ref('avisos', nodo);
+  ref('titulo', nodo).textContent = bloque ? `Bloque de ${o.numero}` : `Planificar ${o.numero}`;
+  ref('resumen', nodo).textContent = [o.cliente_nombre, o.cliente_zona, textoMaquina(o), o.sintoma].filter(Boolean).join(' · ');
+  const selT = form.elements.tecnico_id;
+  selT.innerHTML = '<option value="">— Elige técnico —</option>' + tecnicos.map((t) => `<option value="${t.id}">${esc(t.nombre)}${t.rol === 'sat' ? ' (SAT)' : ''}</option>`).join('');
+  const tecnicoInicial = bloque ? bloque.tecnico_id : (tecnico_id || o.tecnico_id || '');
+  if (tecnicoInicial && !$(`option[value="${tecnicoInicial}"]`, selT)) selT.insertAdjacentHTML('beforeend', `<option value="${tecnicoInicial}">${esc((bloque && bloque.tecnico_nombre) || o.tecnico_nombre || 'Técnico actual')} · de baja</option>`);
+  selT.value = tecnicoInicial ? String(tecnicoInicial) : '';
+  form.elements.dia.value = bloque ? bloque.dia : (dia || (enPlan && S.plan.modo === 'dia' ? S.plan.fecha : hoyISO()));
+  form.elements.hora_inicio.value = bloque ? bloque.hora_inicio : (hora_inicio || '08:00');
+  const dur = bloque ? bloque.duracion_min : (duracion_min || (enPlan && S.plan.datos.duracion_defecto) || 120);
+  const selD = form.elements.duracion_min;
+  selD.innerHTML = [...new Set([...DURACIONES, dur])].sort((x, y) => x - y).map((m) => `<option value="${m}">${textoDuracion(m)}</option>`).join('');
+  selD.value = String(dur);
+  form.elements.nota.value = bloque ? (bloque.nota || '') : '';
+  const guardar = ref('guardar', nodo);
+  guardar.textContent = bloque ? 'Guardar' : 'Planificar';
+  ref('ver-ot', nodo).onclick = () => abrirDetalle(otId);
+  const terminar = () => {
+    cerrarModal(nodo);
+    if (alTerminar) alTerminar();
+    if (S.vista === 'planificador') recargarPlan(true); else refrescarVista();
+  };
+  if (!editable) {
+    for (const el of $$('input, select', form)) el.disabled = true;
+    guardar.classList.add('oculto');
+  }
+  if (bloque && editable) {
+    const quitar = ref('quitar', nodo);
+    quitar.classList.remove('oculto');
+    quitar.onclick = async () => { if (await quitarBloque(bloque)) terminar(); };
+    const partir = ref('partir', nodo);
+    partir.classList.remove('oculto');
+    partir.onclick = () => {
+      cerrarModal(nodo);
+      abrirBloque({ ot: { ...o, id: otId }, tecnico_id: bloque.tecnico_id, dia: sumarDias(bloque.dia, 1), hora_inicio: bloque.hora_inicio, duracion_min: bloque.duracion_min, alTerminar });
+    };
+  }
+  form.onsubmit = async (e) => {
+    e.preventDefault();
+    if (!editable) return;
+    const body = { tecnico_id: Number(selT.value), dia: form.elements.dia.value, hora_inicio: form.elements.hora_inicio.value.slice(0, 5), duracion_min: Number(selD.value), nota: form.elements.nota.value.trim() || null };
+    if (!body.tecnico_id) { aviso(avisos, 'Elige el técnico', 'error'); selT.focus(); return; }
+    guardar.disabled = true;
+    try {
+      const r = await api(`/api/ot/${otId}/bloques${bloque ? '/' + bloque.id : ''}`, { method: bloque ? 'PUT' : 'POST', body });
+      toast(`${o.numero}: ${bloque ? 'bloque guardado' : `planificada el ${fecha(body.dia)} a las ${body.hora_inicio}`}`, 'ok');
+      for (const av of r.avisos || []) toast(av.texto, 'aviso');
+      terminar();
+    } catch (err) {
+      mostrarErrorAccion(err, avisos);
+      guardar.disabled = false;
+    }
+  };
+  abrirModal(nodo);
 }
 
 // ---------------------------------------------------------------------------
@@ -757,6 +1315,7 @@ function pintarPaginacion(contenedor, datos, irA) {
 // Refresca la vista de fondo tras un cambio hecho desde un modal.
 function refrescarVista() {
   if (S.vista === 'kanban') { S.kanban.etag = null; cargarKanban(); }
+  else if (S.vista === 'planificador') recargarPlan(true);
   else if (S.vista === 'misot') pintarMisOT();
   else if (S.vista === 'listado') cargarListado();
   else if (S.vista === 'clientes') cargarClientes();
@@ -1329,10 +1888,20 @@ function pintarDetalle(nodo, ot) {
   chipEt.classList.toggle('oculto', !ot.etiqueta);
   if (ot.etiqueta) { chipEt.textContent = ot.etiqueta_nombre || ot.etiqueta; chipEt.style.background = ot.etiqueta_color || '#6b7280'; }
   ref('prioridad', nodo).textContent = `Prioridad ${PRIORIDADES[ot.prioridad] || ot.prioridad}`;
-  // F4-01: bloques de planificación (los crea el Planificador, F4-02).
-  ref('bloques', nodo).textContent = ot.bloques && ot.bloques.length
-    ? ot.bloques.map((b) => `${fecha(b.dia)} ${b.hora_inicio} · ${b.tecnico_nombre} · ${b.duracion_min} min`).join(' | ')
+  // Bloques de planificación (F4-01/F4-02); quien planifica puede añadir uno desde aquí.
+  const celdaBloques = ref('bloques', nodo);
+  celdaBloques.textContent = ot.bloques && ot.bloques.length
+    ? ot.bloques.map((b) => `${fecha(b.dia)} ${b.hora_inicio} · ${b.tecnico_nombre} · ${textoDuracion(b.duracion_min)}`).join(' | ')
     : (ot.fecha_prevista ? `Sin bloques · prevista ${fecha(ot.fecha_prevista)}` : 'Sin planificar');
+  if (puede('planificador.editar') && !ot.es_final) {
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.className = 'btn btn-pequeno btn-en-linea';
+    b.dataset.accion = 'planificar';
+    b.textContent = ot.bloques && ot.bloques.length ? '+ Bloque' : 'Planificar';
+    b.onclick = () => abrirBloque({ ot, alTerminar: async () => { await recargarDetalle(nodo, ot.id); } });
+    celdaBloques.append(' ', b);
+  }
   ref('cliente', nodo).textContent = ot.cliente_nombre + (ot.exige_pedido ? ' · exige Nº pedido' : '');
   ref('maquina', nodo).textContent = textoMaquina(ot) || '—';
   ref('tecnico', nodo).textContent = ot.tecnico_nombre || (ot.karve_operario ? `${ot.karve_operario} (operario en Karve, sin usuario en la app)` : 'Sin asignar');
