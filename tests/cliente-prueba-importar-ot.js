@@ -120,6 +120,43 @@ const todasLasOT = (kanban) => kanban.fases.flatMap((f) => f.ots);
   x = await pedir(`/api/ot/${o949.id}`, { cookie: A });
   ok('la O.T. editada conserva el síntoma de la app', x.s === 200 && x.j.sintoma === 'Editada en la app' && x.j.version === 2);
 
+  // --- F4-13: bloques automáticos en el Planificador ------------------------------------------------------------------------
+  // En la copia de Karve todas las fechas previstas están vencidas y no hay horas: los bloques salen del reparto por capacidad.
+  const bloquesDe = (salida) => { const m = salida.match(/Bloques automáticos: (\d+) en su fecha prevista · (\d+) repartidas \(fecha vencida\) · (\d+) quitados · (\d+) sin hueco · (\d+) vencidas sin repartir · (\d+) planificadas sin técnico/); return m ? { en_fecha: +m[1], repartidas: +m[2], quitados: +m[3], sin_hueco: +m[4], sin_repartir: +m[5], sin_tecnico: +m[6] } : null; };
+  const isoLocal = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+  const hoyMas = (dias) => { const d = new Date(); d.setDate(d.getDate() + dias); return isoLocal(d); };
+  const laborable = (iso) => { const [aa, mm, dd] = iso.split('-').map(Number); const w = new Date(aa, mm - 1, dd).getDay(); return w !== 0 && w !== 6; };
+  let bq = bloquesDe(r.salida);
+  ok('sin técnicos con código de operario de Karve: ningún bloque automático; las planificadas quedan sin técnico (≥ 300)', bq && bq.en_fecha === 0 && bq.repartidas === 0 && bq.quitados === 0 && bq.sin_tecnico >= 300, JSON.stringify(bq));
+  x = await pedir('/api/usuarios', { cookie: A, metodo: 'POST', body: { usuario: 'karve124', nombre: 'Operario Karve 0000124', rol: 'tecnico', clave: 'prueba-123456', karve_id: '0000124' } });
+  const tk = x.j;
+  r = importar(['--cerradas=20', '--sin-repartir']);
+  bq = bloquesDe(r.salida);
+  ok('técnico con el código 0000124 + --sin-repartir: sus O.T. se enlazan (≥ 20 actualizadas) pero, con la fecha vencida, no reciben bloque', x.s === 201 && r.vivas.actualizadas >= 20 && bq && bq.repartidas === 0 && bq.en_fecha === 0 && bq.sin_repartir >= 20, `${x.s} ${JSON.stringify(bq)}`);
+  r = importar(['--cerradas=20']);
+  bq = bloquesDe(r.salida);
+  const repartidas = bq ? bq.repartidas : 0;
+  ok('importación normal: sus planificadas se reparten (≥ 20), ninguna sin hueco', bq && repartidas >= 20 && bq.sin_hueco === 0 && bq.quitados === 0 && r.vivas.actualizadas === 0, JSON.stringify(bq));
+  x = await pedir(`/api/planificador?desde=${hoyMas(1)}&hasta=${hoyMas(31)}`, { cookie: A });
+  const autos = (x.j.bloques || []).filter((bl) => bl.origen === 'karve');
+  const porDia = {};
+  for (const bl of autos) porDia[bl.dia] = (porDia[bl.dia] || 0) + 1;
+  ok('Planificador: bloques automáticos del técnico, de 2 h, 4 por día como mucho, solo en laborables, con la O.T. intacta (versión 1, planificada)', x.s === 200 && autos.length === repartidas && autos.every((bl) => bl.tecnico_id === tk.id && bl.duracion_min === 120 && bl.version === 1 && bl.estado === 'planificada') && Object.values(porDia).every((n) => n <= 4) && Object.keys(porDia).every(laborable) && !x.j.avisos.some((av) => av.tecnico_id === tk.id && av.tipo !== 'zonas'), `autos=${autos.length} dias=${Object.keys(porDia).length} avisos=${x.j.avisos.filter((av) => av.tecnico_id === tk.id).map((av) => av.tipo).join()}`);
+  const primero = autos[0];
+  x = await pedir(`/api/ot/${primero.ot_id}`, { cookie: A });
+  ok('detalle: técnico enlazado, un bloque de origen karve e historial "Planificada automáticamente (Karve): …" sin usuario', x.s === 200 && x.j.tecnico_id === tk.id && x.j.bloques.length === 1 && x.j.bloques[0].origen === 'karve' && /^Planificada automáticamente \(Karve\): /.test(x.j.historial.at(-1).nota) && x.j.historial.at(-1).usuario_id === null, x.j.historial && x.j.historial.at(-1).nota);
+  x = await pedir(`/api/ot/${primero.ot_id}/bloques/${primero.id}`, { cookie: A, metodo: 'PUT', body: { hora_inicio: '16:00' } });
+  ok('mover un bloque automático → pasa a origen manual y la O.T. sube de versión', x.s === 200 && x.j.bloque.origen === 'manual' && x.j.bloque.hora_inicio === '16:00' && x.j.ot.version === 2, x.t.slice(0, 120));
+  r = importar(['--cerradas=20']);
+  bq = bloquesDe(r.salida);
+  ok('otra importación: nada que repartir ni quitar; la O.T. del bloque movido se conserva (2 conservadas)', bq && bq.repartidas === 0 && bq.quitados === 0 && bq.en_fecha === 0 && r.vivas.conservadas === 2, `${JSON.stringify(bq)} conservadas=${r.vivas.conservadas}`);
+  x = await pedir(`/api/ot/${primero.ot_id}`, { cookie: A });
+  ok('…y su bloque sigue donde se dejó (manual, 16:00)', x.j.bloques.length === 1 && x.j.bloques[0].hora_inicio === '16:00' && x.j.bloques[0].origen === 'manual');
+  x = await pedir(`/api/usuarios/${tk.id}`, { cookie: A, metodo: 'PUT', body: { activo: false } });
+  r = importar(['--cerradas=20']);
+  bq = bloquesDe(r.salida);
+  ok('técnico desactivado: la importación quita sus bloques automáticos de las O.T. no tocadas y las desenlaza', x.s === 200 && bq && bq.quitados === repartidas - 1 && bq.repartidas === 0, JSON.stringify(bq));
+
   // Cerrar una O.T. en la app (etiqueta facturada) deja fecha_cierre; desaparece del Tablero y sale con ?cerradas=7
   x = await pedir('/api/ot?abiertas=0&limite=1&estado=finalizada&etiqueta=vb_factura', { cookie: A });
   const vb = x.j.ots[0];

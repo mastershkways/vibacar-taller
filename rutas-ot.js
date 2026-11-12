@@ -11,6 +11,9 @@
 //   - F4-02: "pendiente de planificar" significa sin plan. Si alguien manda ahí una O.T. que tiene bloques de hoy en adelante
 //     (p. ej. una pausada preplanificada a la que le llega el repuesto), queda en "planificada". Al salir de Pausada hacia
 //     pendiente de planificar se anota la propuesta para la bandeja del Planificador (`ot.propuesta`).
+//   - F4-05 / F4-06: para pasar a "finalizada" hace falta tiempo de trabajo imputado y el checklist respondido (tiempos.js).
+//     Técnico y SAT no pueden saltárselo (422); quien puede cerrar sí, mandando `forzar`, y queda anotado en el historial.
+//     Al salir de "en curso" se cierran los tramos de cronómetro abiertos de la O.T.
 
 const express = require('express');
 const crypto = require('crypto');
@@ -18,6 +21,7 @@ const { db, ahora } = require('./db');
 const { siguienteNumeroOT, leerMaximoKarve } = require('./numeracion');
 const { requierePermiso, puede, alcanceDe, DESTINOS_ASIGNADAS } = require('./permisos');
 const { ErrorHttp, texto, entero, enumerado, idRuta } = require('./validar');
+const tiempos = require('./tiempos');
 
 const TIPOS = ['correctivo', 'preventivo'];
 const ORIGENES = ['manual', 'whatsapp', 'correo', 'auto', 'karve'];   // karve = importada de Karve (F3.6-01)
@@ -52,7 +56,7 @@ const stmt = {
   estadoInicial: db.prepare('SELECT e.* FROM estados e JOIN fases f ON f.codigo = e.fase WHERE e.es_inicial = 1 AND e.activo = 1 ORDER BY f.orden, e.orden LIMIT 1'),
   estadosActivos: db.prepare('SELECT e.codigo, e.nombre, e.fase, e.color, e.es_final FROM estados e JOIN fases f ON f.codigo = e.fase WHERE e.activo = 1 ORDER BY f.orden, e.orden'),
   etiqueta: db.prepare('SELECT codigo, nombre, estado FROM etiquetas WHERE codigo = ? AND activo = 1'),
-  otBloqueo: db.prepare('SELECT o.id, o.estado, o.etiqueta, o.version, o.tecnico_id, e.es_final FROM ot o JOIN estados e ON e.codigo = o.estado WHERE o.id = ?'),
+  otBloqueo: db.prepare('SELECT o.id, o.estado, o.etiqueta, o.version, o.tecnico_id, o.tipo, e.es_final FROM ot o JOIN estados e ON e.codigo = o.estado WHERE o.id = ?'),
   cambiarEstado: db.prepare('UPDATE ot SET estado = ?, etiqueta = ?, version = version + 1, actualizado = ? WHERE id = ? AND version = ?'),
   historial: db.prepare('INSERT INTO ot_historial (ot_id, estado_anterior, estado_nuevo, usuario_id, fecha, nota) VALUES (?, ?, ?, ?, ?, ?)'),
   leerHistorial: db.prepare(`
@@ -88,7 +92,9 @@ const stmt = {
 function filtroAlcance(req) {
   switch (alcanceDe(req.usuario.rol)) {
     case 'asignadas':
-      return { sql: ' AND o.tecnico_id = ?', params: [req.usuario.id] };
+      // Sus O.T.: las que tiene como técnico o aquellas en las que tiene un bloque de hoy en adelante (una O.T. puede llevar
+      // bloques de varios técnicos y `ot.tecnico_id` solo es el del próximo).
+      return { sql: " AND (o.tecnico_id = ? OR EXISTS (SELECT 1 FROM ot_bloques ba WHERE ba.ot_id = o.id AND ba.tecnico_id = ? AND ba.dia >= date('now', 'localtime')))", params: [req.usuario.id, req.usuario.id] };
     case 'clientes_propios':
       // F2-05: el comercial solo ve las O.T. de los clientes de su cartera (clientes.comercial_id = él).
       return { sql: ' AND o.cliente_id IN (SELECT id FROM clientes WHERE comercial_id = ?)', params: [req.usuario.id] };
@@ -119,12 +125,18 @@ function destinosPara(usuario, ot) {
 
 function detalleOT(req, id) {
   const ot = cargarOT(req, id);
+  tiempos.asegurarChecklist(ot);                 // F4-05: si su tipo tiene plantilla y aún no la tenía, se le copia ahora
+  const { tramos, tiempo } = tiempos.tiemposOT(id);
   return {
     ...ot,
     historial: stmt.leerHistorial.all(id),
     asignaciones: stmt.leerAsignaciones.all(id),
     bloques: stmt.leerBloques.all(id),
     destinos: destinosPara(req.usuario, ot),
+    tiempos: tramos,                             // F4-06: tramos del cronómetro (los abiertos, contados hasta ahora)
+    tiempo,                                      // totales en segundos por tipo + previsto_min (bloques) + en_marcha
+    checklist: tiempos.checklistOT(id),
+    requisitos: tiempos.requisitosFinalizar(ot), // qué falta para poder finalizarla
   };
 }
 
@@ -141,7 +153,7 @@ function comprobarEtiqueta(codigo, estado) {
 // Cambio de estado (se usa desde /estado y desde la aprobación de asignación).
 // Debe ejecutarse dentro de una transacción. Valida permisos del flujo libre y versión, escribe historial.
 // ---------------------------------------------------------------------------
-function aplicarCambioEstado({ otId, destino, etiqueta = null, tecnicoId = undefined, usuario, nota = null, versionEsperada = null }) {
+function aplicarCambioEstado({ otId, destino, etiqueta = null, tecnicoId = undefined, usuario, nota = null, versionEsperada = null, forzar = false }) {
   const actual = stmt.otBloqueo.get(otId);
   if (!actual) throw new ErrorHttp(404, 'O.T. no encontrada');
   if (versionEsperada !== null && actual.version !== versionEsperada) {
@@ -159,6 +171,17 @@ function aplicarCambioEstado({ otId, destino, etiqueta = null, tecnicoId = undef
   if (alcanceDe(usuario.rol) === 'asignadas' && !DESTINOS_ASIGNADAS.includes(destino)) {
     throw new ErrorHttp(403, `Tu rol solo puede pasar la O.T. a: ${DESTINOS_ASIGNADAS.join(', ')}`, { desde: actual.estado, hasta: destino });
   }
+  // F4-05 / F4-06: finalizar exige tiempo de trabajo imputado y el checklist respondido. Reabrir una cerrada no lo exige.
+  let forzado = null;
+  if (destino === 'finalizada' && !actual.es_final) {
+    const req = tiempos.requisitosFinalizar({ id: otId, estado: actual.estado, tipo: actual.tipo });
+    if (req.faltan.length) {
+      const puedeForzar = alcanceDe(usuario.rol) !== 'asignadas' && puedeCerrar;
+      const faltan = req.faltan.map((f) => f.texto).join('; ');
+      if (!puedeForzar || !forzar) throw new ErrorHttp(422, `No se puede finalizar: ${faltan}`, { faltan: req.faltan.map((f) => f.codigo), puede_forzar: puedeForzar });
+      forzado = `forzado por oficina: ${faltan}`;
+    }
+  }
   const et = comprobarEtiqueta(etiqueta, destino);
   let tecnico = null;
   if (tecnicoId !== undefined && tecnicoId !== null) {
@@ -174,7 +197,9 @@ function aplicarCambioEstado({ otId, destino, etiqueta = null, tecnicoId = undef
   // F4-02: propuesta para la bandeja del Planificador (sale de Pausada y queda sin plan); en cualquier otro cambio se limpia.
   const propuesta = actual.estado === 'pausada' && destino === 'pendiente_planificar' ? (actual.etiqueta || 'lista') : null;
   db.prepare('UPDATE ot SET propuesta = ?, propuesta_fecha = ? WHERE id = ?').run(propuesta, propuesta ? ahora() : null, otId);
-  const partes = [et ? `[${et.nombre}]` : null, tecnico ? `Técnico: ${tecnico.nombre}` : null, nota, conservaPlan ? 'conserva su planificación' : null].filter(Boolean);
+  // F4-06: fuera de "en curso" no hay cronómetro en marcha: se cierran los tramos abiertos de la O.T.
+  if (destino !== 'en_curso') tiempos.cerrarTramosOT(otId, destino === 'finalizada' ? 'fin' : destino === 'pausada' ? 'pausa' : 'estado');
+  const partes = [et ? `[${et.nombre}]` : null, tecnico ? `Técnico: ${tecnico.nombre}` : null, nota, conservaPlan ? 'conserva su planificación' : null, forzado].filter(Boolean);
   stmt.historial.run(otId, actual.estado, destino, usuario.id, ahora(), partes.join(' · ') || null);
   return { anterior: actual.estado, nuevo: destino, etiqueta: et ? et.codigo : null };
 }
@@ -295,7 +320,8 @@ module.exports = function montarRutasOT(app) {
     const pCerradas = dias > 0 ? [`-${dias} days`] : [];
     const base = `FROM ot o JOIN estados e ON e.codigo = o.estado JOIN fases fa ON fa.codigo = e.fase WHERE ${vivasOCerradasRecientes} AND e.activo = 1${f.sql}`;
     const firma = db.prepare(`SELECT COUNT(*) AS n, COALESCE(SUM(o.version), 0) AS v, COALESCE(MAX(COALESCE(o.actualizado, o.creado)), '') AS m ${base}`).get(...pCerradas, ...f.params);
-    const etag = `"${crypto.createHash('sha1').update(`v2|${firma.n}|${firma.v}|${firma.m}|${req.usuario.rol}|${req.usuario.id}|${dias}`).digest('hex').slice(0, 20)}"`;
+    const firmaT = db.prepare('SELECT COUNT(*) AS n, COUNT(fin) AS c, COALESCE(MAX(id), 0) AS m FROM ot_tiempos').get();   // F4-06: la fase del cronómetro cambia sin tocar la versión
+    const etag = `"${crypto.createHash('sha1').update(`v3|${firma.n}|${firma.v}|${firma.m}|${firmaT.n}|${firmaT.c}|${firmaT.m}|${req.usuario.rol}|${req.usuario.id}|${dias}`).digest('hex').slice(0, 20)}"`;
     if (req.headers['if-none-match'] === etag) return res.status(304).end();
 
     const fases = db.prepare('SELECT codigo, nombre, orden, abierta FROM fases WHERE abierta = 1 OR ? > 0 ORDER BY orden').all(dias);
@@ -309,7 +335,9 @@ module.exports = function montarRutasOT(app) {
              o.karve_estado, o.karve_operario, o.fecha_cierre,
              (SELECT b.dia || ' ' || b.hora_inicio FROM ot_bloques b WHERE b.ot_id = o.id AND b.dia >= date('now', 'localtime') ORDER BY b.dia, b.hora_inicio, b.id LIMIT 1) AS proximo_bloque,
              (SELECT u2.nombre FROM ot_bloques b JOIN usuarios u2 ON u2.id = b.tecnico_id WHERE b.ot_id = o.id AND b.dia >= date('now', 'localtime') ORDER BY b.dia, b.hora_inicio, b.id LIMIT 1) AS proximo_tecnico,
-             (SELECT COUNT(*) FROM ot_bloques b WHERE b.ot_id = o.id AND b.dia >= date('now', 'localtime')) AS bloques_futuros
+             (SELECT COUNT(*) FROM ot_bloques b WHERE b.ot_id = o.id AND b.dia >= date('now', 'localtime')) AS bloques_futuros,
+             (SELECT x.tipo FROM ot_tiempos x WHERE x.ot_id = o.id AND x.fin IS NULL ORDER BY x.id DESC LIMIT 1) AS crono_tipo,
+             (SELECT x.inicio FROM ot_tiempos x WHERE x.ot_id = o.id AND x.fin IS NULL ORDER BY x.id DESC LIMIT 1) AS crono_inicio
         FROM ot o
         JOIN estados e ON e.codigo = o.estado
         JOIN fases fa ON fa.codigo = e.fase
@@ -423,7 +451,8 @@ module.exports = function montarRutasOT(app) {
     res.json(detalleOT(req, id));
   });
 
-  // Cambio de estado (flujo libre). Body: { estado, etiqueta?, tecnico_id?, nota?, version? }.
+  // Cambio de estado (flujo libre). Body: { estado, etiqueta?, tecnico_id?, nota?, version?, forzar? }.
+  // `forzar` (solo quien puede cerrar): finaliza aunque falte tiempo de trabajo o checklist; sin él responde 422 con `faltan`.
   r.post('/ot/:id/estado', requierePermiso('ot.cambiar_estado'), (req, res) => {
     const id = idRuta(req.params.id);
     const b = req.body || {};
@@ -433,7 +462,7 @@ module.exports = function montarRutasOT(app) {
     const version = entero(b.version, { nombre: 'version', min: 1 });
     const tecnicoId = b.tecnico_id === undefined || b.tecnico_id === null || b.tecnico_id === '' ? undefined : entero(b.tecnico_id, { nombre: 'tecnico_id', min: 1 });
     cargarOT(req, id); // alcance
-    const cambio = db.transaction(() => aplicarCambioEstado({ otId: id, destino, etiqueta, tecnicoId, usuario: req.usuario, nota, versionEsperada: version })).immediate();
+    const cambio = db.transaction(() => aplicarCambioEstado({ otId: id, destino, etiqueta, tecnicoId, usuario: req.usuario, nota, versionEsperada: version, forzar: b.forzar === true })).immediate();
     res.json({ cambio, ot: detalleOT(req, id) });
   });
 
@@ -475,5 +504,5 @@ module.exports = function montarRutasOT(app) {
 
   app.use('/api', r);
 };
-// Para rutas-planificador.js (mismo alcance, mismo cambio de estado y mismo detalle que aquí).
+// Para rutas-planificador.js y rutas-tecnico.js (mismo alcance, mismo cambio de estado y mismo detalle que aquí).
 Object.assign(module.exports, { filtroAlcance, cargarOT, detalleOT, aplicarCambioEstado });

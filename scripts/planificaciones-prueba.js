@@ -10,12 +10,14 @@
 // (crearBloque / aplicarCambioEstado), así que el estado, el técnico y el historial quedan como si se hubiera planificado a mano.
 //
 // Qué hace con --aplicar:
-//   - Técnicos: si no hay ninguno activo, crea usuarios de prueba (prueba_tec1…) con el nombre de los operarios de Karve que más
-//     O.T. planificadas tienen (se saltan los genéricos: TALLER, REPUESTOS, ADMINISTRACION…) y un SAT externo de prueba. Si Karve
-//     responde (SOLO LECTURA, base de pruebas), les pone su código de operario real en `karve_id`, para que la importación de
-//     O.T. los enlace como hará con los técnicos de verdad.
-//   - Reparte las O.T. planificadas de cada uno en los próximos días laborables (2 a 4 por día, de 1 a 4 h, con hueco para comer),
-//     con un día sobrecargado, un solape y una O.T. partida en dos días para que se vean los avisos y los carriles.
+//   - Técnicos: un usuario de prueba (prueba_tec1…) por cada operario de Karve con O.T. vivas que aún no tenga usuario (se saltan
+//     los genéricos: TALLER, REPUESTOS, ADMINISTRACION… y los códigos sin nombre), más un SAT externo de prueba. Si Karve responde
+//     (SOLO LECTURA, base de pruebas), les pone su código de operario real en `karve_id`: así la importación de O.T.
+//     (`node scripts/karve-importar-ot.js`) les enlaza sus O.T. y les crea los bloques automáticos (F4-13), igual que hará con
+//     los técnicos de verdad. Se puede repetir: solo añade los que falten.
+//   - Reparto de demostración (solo la primera vez, para los 6 primeros técnicos y el SAT): sus O.T. planificadas en los próximos
+//     días laborables (2 a 4 por día, de 1 a 4 h, con hueco para comer), con un día sobrecargado, un solape y una O.T. partida en
+//     dos días para que se vean los avisos y los carriles.
 //   - Bandeja: marca 3 O.T. pausadas por repuesto como "repuesto recibido" y preplanifica una pausada por presupuesto.
 //   - Crea prueba_responsable (rol responsable_st, contraseña prueba123) para entrar directamente en el Planificador.
 // Todo lo que crea lleva el usuario prueba_responsable como autor: así --quitar sabe qué deshacer.
@@ -33,7 +35,7 @@ const quitar = args.includes('--quitar');
 const CLAVE = 'prueba123';
 const N_TECNICOS = 6;
 const DIAS = 8;                                             // días laborables a rellenar, empezando hoy
-const GENERICOS = /^(AREA RECAMBIOS|TALLER|REPUESTOS|RECAMBIOS|MANTENIMIENTOS|ADMINISTRACION|ALMACEN|COMERCIAL|S\.?A\.?T\.?.*|\W.*)$/i;
+const GENERICOS = /^(AREA RECAMBIOS|TALLER|REPUESTOS|RECAMBIOS|MANTENIMIENTOS|ADMINISTRACION|ALMACEN|COMERCIAL|S\.?A\.?T\.?.*|\W.*|[\d.\s]+)$/i;
 const DURACIONES = [120, 90, 180, 60, 150, 120, 240];
 
 const dos = (n) => String(n).padStart(2, '0');
@@ -48,7 +50,7 @@ function laborables(n, desde = 0) {                           // n días laborab
 function laborableAnterior() { const d = new Date(); do { d.setDate(d.getDate() - 1); } while (d.getDay() === 0 || d.getDay() === 6); return iso(d); }
 
 console.log(`Base: ${RUTA_BD}`);
-const resumen = { tecnicos: [], bloques: 0, porDia: {}, propuestas: 0, preplanificadas: 0, partidas: 0, vencidos: 0 };
+const resumen = { tecnicos: [], nuevos: [], yaRepartido: 0, bloques: 0, porDia: {}, propuestas: 0, preplanificadas: 0, partidas: 0, vencidos: 0 };
 class Simulacion extends Error {}
 
 // Código de operario de Karve por nombre (solo lectura; si Karve no responde en 60 s se sigue sin códigos).
@@ -80,12 +82,17 @@ if (quitar) {
   const u = db.prepare("SELECT id, usuario, nombre, rol FROM usuarios WHERE usuario = 'prueba_responsable'").get();
   if (!u) { console.log('No hay datos de prueba (no existe prueba_responsable).'); process.exit(0); }
   const bloques = db.prepare('SELECT * FROM ot_bloques WHERE creado_por = ? ORDER BY dia DESC, id DESC').all(u.id);
+  let automaticos = 0;
   db.transaction(() => {
     for (const b of bloques) plan.quitarBloque(b.ot_id, b, u);
+    // F4-13: bloques automáticos de los técnicos de prueba en O.T. que nadie ha tocado, y el enlace de esas O.T. con ellos.
+    const dePrueba = "SELECT id FROM usuarios WHERE usuario LIKE 'prueba\\_%' ESCAPE '\\'";
+    automaticos = db.prepare(`DELETE FROM ot_bloques WHERE origen = 'karve' AND tecnico_id IN (${dePrueba}) AND ot_id IN (SELECT id FROM ot WHERE version = 1)`).run().changes;
+    db.prepare(`UPDATE ot SET tecnico_id = NULL WHERE version = 1 AND origen = 'karve' AND tecnico_id IN (${dePrueba})`).run();
     db.prepare("UPDATE usuarios SET activo = 0 WHERE usuario LIKE 'prueba\\_%' ESCAPE '\\'").run();
     db.prepare("DELETE FROM sesiones WHERE usuario_id IN (SELECT id FROM usuarios WHERE usuario LIKE 'prueba\\_%' ESCAPE '\\')").run();
   })();
-  console.log(`✅ Quitados ${bloques.length} bloques de prueba; usuarios prueba_* desactivados. Las O.T. que se quedan sin plan vuelven a "Pendiente de planificar".`);
+  console.log(`✅ Quitados ${bloques.length} bloques de prueba y ${automaticos} bloques automáticos de los técnicos de prueba; usuarios prueba_* desactivados. Las O.T. que se quedan sin plan vuelven a "Pendiente de planificar".`);
   process.exit(0);
 }
 
@@ -96,25 +103,51 @@ function generar(codigos) {
   const u = autor();
   const hoy = iso(new Date());
 
-  // Técnicos: los que haya; si no hay, de prueba con los nombres de los operarios de Karve.
-  let tecnicos = db.prepare("SELECT id, nombre, rol FROM usuarios WHERE activo = 1 AND rol IN ('tecnico', 'sat') ORDER BY (rol = 'sat'), id").all();
-  if (!tecnicos.length) {
-    const operarios = db.prepare(`SELECT karve_operario AS nombre, COUNT(*) AS n FROM ot WHERE estado = 'planificada' AND karve_operario IS NOT NULL GROUP BY 1 ORDER BY n DESC`).all()
-      .filter((o) => !GENERICOS.test(o.nombre.trim())).slice(0, N_TECNICOS);
-    const lista = operarios.length ? operarios.map((o) => [nombrePropio(o.nombre), o.nombre]) : Array.from({ length: 4 }, (_, i) => [`Técnico ${i + 1} (prueba)`, null]);
-    const ins = db.prepare('INSERT INTO usuarios (usuario, nombre, clave_hash, rol, karve_id) VALUES (?, ?, ?, ?, ?)');
-    lista.forEach(([nombre, operario], i) => {
-      const login = `prueba_tec${i + 1}`;
-      const codigo = (operario && codigos.get(operario.trim())) || null;
-      const ya = db.prepare('SELECT id FROM usuarios WHERE usuario = ?').get(login);
-      if (ya) db.prepare("UPDATE usuarios SET activo = 1, nombre = ?, rol = 'tecnico', karve_id = ? WHERE id = ?").run(nombre, codigo, ya.id);
-      tecnicos.push({ id: ya ? ya.id : ins.run(login, nombre, hashClave(CLAVE), 'tecnico', codigo).lastInsertRowid, nombre, rol: 'tecnico', karve: operario, codigo });
-    });
-    const sat = db.prepare("SELECT id FROM usuarios WHERE usuario = 'prueba_sat'").get();
-    if (sat) db.prepare('UPDATE usuarios SET activo = 1 WHERE id = ?').run(sat.id);
-    tecnicos.push({ id: sat ? sat.id : ins.run('prueba_sat', 'SAT externo (prueba)', hashClave(CLAVE), 'sat', null).lastInsertRowid, nombre: 'SAT externo (prueba)', rol: 'sat', karve: null });
+  // Técnicos: un usuario por cada operario de Karve con O.T. vivas (los que ya existen, de prueba o reales, se respetan; los que
+  // faltan se crean como prueba_tecN). Sin O.T. de Karve y sin técnicos: 4 genéricos. Y un SAT de prueba si no hay ninguno.
+  const esPrueba = (x) => /^prueba_/.test(x.usuario);
+  const existentes = db.prepare("SELECT id, usuario, nombre, rol, karve_id, activo FROM usuarios WHERE rol IN ('tecnico', 'sat') ORDER BY id").all();
+  const operarios = db.prepare(`
+    SELECT o.karve_operario AS nombre, COUNT(*) AS n, SUM(o.estado = 'planificada') AS plan
+      FROM ot o JOIN estados e ON e.codigo = o.estado
+     WHERE e.es_final = 0 AND o.origen = 'karve' AND o.karve_operario IS NOT NULL
+     GROUP BY 1 ORDER BY plan DESC, n DESC, 1`).all().filter((o) => !GENERICOS.test(o.nombre.trim()));
+  const ins = db.prepare('INSERT INTO usuarios (usuario, nombre, clave_hash, rol, karve_id) VALUES (?, ?, ?, ?, ?)');
+  let numero = existentes.reduce((m, x) => { const r = /^prueba_tec(\d+)$/.exec(x.usuario); return r ? Math.max(m, Number(r[1])) : m; }, 0);
+  const operarioDe = new Map();                                // id de usuario → nombre del operario en Karve
+  const alta = (nombre, operario, codigo) => {
+    const login = `prueba_tec${++numero}`;
+    const id = ins.run(login, nombre, hashClave(CLAVE), 'tecnico', codigo).lastInsertRowid;
+    existentes.push({ id, usuario: login, nombre, rol: 'tecnico', karve_id: codigo, activo: 1 });
+    resumen.nuevos.push(`${login} = ${nombre}${codigo ? ` [Karve ${codigo}]` : ''}`);
+    if (operario) operarioDe.set(id, operario);
+  };
+  for (const o of operarios) {
+    const nombre = nombrePropio(o.nombre);
+    const codigo = codigos.get(o.nombre.trim()) || null;
+    const ya = existentes.find((x) => (codigo && x.karve_id === codigo) || x.nombre === nombre);
+    if (!ya) { alta(nombre, o.nombre, codigo); continue; }
+    if (esPrueba(ya)) db.prepare('UPDATE usuarios SET activo = 1, karve_id = COALESCE(?, karve_id) WHERE id = ?').run(codigo, ya.id);
+    if (esPrueba(ya)) ya.activo = 1;
+    operarioDe.set(ya.id, o.nombre);
   }
-  resumen.tecnicos = tecnicos.map((t) => `${t.nombre}${t.rol === 'sat' ? ' (SAT)' : ''}${t.codigo ? ` [Karve ${t.codigo}]` : ''}`);
+  if (!operarios.length && !existentes.some((x) => x.activo)) for (let i = 1; i <= 4; i++) alta(`Técnico ${i} (prueba)`, null, null);
+  if (!existentes.some((x) => x.rol === 'sat' && x.activo)) {
+    const sat = existentes.find((x) => x.usuario === 'prueba_sat');
+    if (sat) { db.prepare('UPDATE usuarios SET activo = 1 WHERE id = ?').run(sat.id); sat.activo = 1; }
+    else {
+      const id = ins.run('prueba_sat', 'SAT externo (prueba)', hashClave(CLAVE), 'sat', null).lastInsertRowid;
+      existentes.push({ id, usuario: 'prueba_sat', nombre: 'SAT externo (prueba)', rol: 'sat', karve_id: null, activo: 1 });
+      resumen.nuevos.push('prueba_sat = SAT externo (prueba)');
+    }
+  }
+  const activos = existentes.filter((x) => x.activo).map((x) => ({ id: x.id, nombre: x.nombre, rol: x.rol, karve: operarioDe.get(x.id) || null, codigo: x.karve_id }));
+  resumen.tecnicos = activos.map((t) => `${t.nombre}${t.rol === 'sat' ? ' (SAT)' : ''}${t.codigo ? ` [Karve ${t.codigo}]` : ''}`);
+
+  // El reparto de demostración solo se hace una vez (si ya hay bloques de prueba_responsable, no se repite).
+  resumen.yaRepartido = db.prepare('SELECT COUNT(*) AS n FROM ot_bloques WHERE creado_por = ?').get(u.id).n;
+  if (resumen.yaRepartido) { if (!aplicar) throw new Simulacion(); return; }
+  const tecnicos = [...activos.filter((t) => t.rol !== 'sat').slice(0, N_TECNICOS), ...activos.filter((t) => t.rol === 'sat').slice(0, 1)];
 
   const sinFuturo = `NOT EXISTS (SELECT 1 FROM ot_bloques b WHERE b.ot_id = o.id AND b.dia >= '${hoy}')`;
   const usadas = new Set();
@@ -190,13 +223,21 @@ const { mapa: codigos, nota } = await codigosKarve();
 if (nota) console.log(`   Aviso: ${nota}`);
 try { db.transaction(() => generar(codigos))(); } catch (e) { if (!(e instanceof Simulacion)) { console.error(`Error: ${e.message}`); process.exit(1); } }
 
-console.log(`${aplicar ? '✅ Planificaciones de prueba creadas' : 'SIMULACIÓN (no se ha escrito nada; añade --aplicar)'}: ${resumen.bloques} bloques para ${resumen.tecnicos.length} técnicos.`);
+console.log(`${aplicar ? '✅ Seed de pruebas aplicado' : 'SIMULACIÓN (no se ha escrito nada; añade --aplicar)'}: ${resumen.tecnicos.length} técnicos activos (${resumen.nuevos.length} nuevos).`);
 console.log(`   Técnicos: ${resumen.tecnicos.join(' · ')}`);
+if (resumen.nuevos.length) console.log(`   Nuevos (contraseña ${CLAVE}): ${resumen.nuevos.join(' · ')}`);
+if (resumen.yaRepartido) {
+  console.log(`   Reparto de demostración: ya estaba hecho (${resumen.yaRepartido} bloques de prueba_responsable); no se repite.`);
+  console.log('   Siguiente paso: node scripts/karve-importar-ot.js  (enlaza las O.T. de cada operario con su técnico y crea los bloques automáticos)');
+  process.exit(0);
+}
+console.log(`   Reparto de demostración: ${resumen.bloques} bloques.`);
 console.log(`   Bloques por día: ${Object.keys(resumen.porDia).sort().map((d) => `${d.slice(8)}/${d.slice(5, 7)} ${resumen.porDia[d]}`).join(' · ')}`);
 console.log(`   Además: ${resumen.partidas} O.T. partida en dos días · ${resumen.vencidos} con bloque vencido (ayer) · ${resumen.propuestas} "repuesto recibido" en la bandeja · ${resumen.preplanificadas} pausada preplanificada`);
 const porTipo = {};
 for (const a of resumen.avisos || []) porTipo[a.tipo] = (porTipo[a.tipo] || 0) + 1;
 console.log(`   Avisos: ${Object.entries(porTipo).map(([t, n]) => `${n} de ${t}`).join(' · ') || 'ninguno'}`);
 if (aplicar) console.log(`   Para entrar directo al Planificador: usuario prueba_responsable, contraseña ${CLAVE}. Para deshacerlo: node scripts/planificaciones-prueba.js --quitar`);
+console.log('   Siguiente paso: node scripts/karve-importar-ot.js  (enlaza las O.T. de cada operario con su técnico y crea los bloques automáticos)');
 process.exit(0);
 })().catch((e) => { console.error(`Error: ${e.message}`); process.exit(1); });

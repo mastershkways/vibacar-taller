@@ -18,6 +18,7 @@ const { ErrorHttp } = require('./validar');
 const montarRutasMaestros = require('./rutas-maestros');
 const montarRutasOT = require('./rutas-ot');
 const montarRutasPlanificador = require('./rutas-planificador');
+const montarRutasTecnico = require('./rutas-tecnico');
 
 const PORT = parseInt(process.env.PORT, 10) || 3010;
 const CARPETA_PUBLIC = path.join(__dirname, 'public');
@@ -47,6 +48,7 @@ app.get('/', (req, res) => {
 montarRutasMaestros(app);
 montarRutasOT(app);
 montarRutasPlanificador(app);
+montarRutasTecnico(app);
 
 // 5. Estáticos
 app.use(express.static(CARPETA_PUBLIC));

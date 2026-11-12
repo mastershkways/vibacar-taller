@@ -261,6 +261,7 @@ function abrirCambioEstado(ot, destino, { alTerminar = null, contenedorAvisos = 
     if (d.color) boton.style.borderColor = d.color;
     const avisos = ref('avisos', nodo);
     let hecho = false;
+    let forzar = false;                                   // F4-05/F4-06: la oficina puede finalizar sin tiempo de trabajo o sin checklist
     boton.onclick = async () => {
       if (modo === 'etiqueta' && sel.required && !sel.value) { aviso(avisos, 'Elige el motivo', 'error'); sel.focus(); return; }
       if (notaObligatoria && !nota.value.trim()) { aviso(avisos, 'Escribe la nota', 'error'); nota.focus(); return; }
@@ -268,6 +269,7 @@ function abrirCambioEstado(ot, destino, { alTerminar = null, contenedorAvisos = 
       const body = { estado: destino, nota: nota.value.trim() || undefined, version: ot.version };
       if (modo === 'etiqueta') body.etiqueta = sel.value || null;
       if (modo === 'tecnico' && sel.value) body.tecnico_id = Number(sel.value);
+      if (forzar) body.forzar = true;
       try {
         await api(`/api/ot/${ot.id}/estado`, { method: 'POST', body });
         toast(`${ot.numero} → ${d.nombre}`, 'ok');
@@ -277,6 +279,12 @@ function abrirCambioEstado(ot, destino, { alTerminar = null, contenedorAvisos = 
         resolver(true);
       } catch (e) {
         boton.disabled = false;
+        if (e.status === 422 && e.datos && e.datos.puede_forzar && !forzar) {
+          forzar = true;
+          boton.textContent = `Forzar: ${d.nombre}`;
+          aviso(avisos, `${e.message}. Si aun así hay que darla por terminada, pulsa "Forzar": quedará anotado en el historial.`, 'error');
+          return;
+        }
         mostrarErrorAccion(e, avisos);
         if (e.status === 409 || e.status === 403) { hecho = true; cerrarModal(nodo); if (contenedorAvisos) mostrarErrorAccion(e, contenedorAvisos); resolver(false); }
       }

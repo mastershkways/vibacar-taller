@@ -1,9 +1,11 @@
 # Lanza las pruebas de las Fases 3 a 4 sin tocar la base real: base temporal + seed + servidor en 5055 por ciclo,
 # navegador headless (Brave/Chrome/Edge) para las de interfaz y las pruebas de migración (roles y Tablero v2).
-# Uso: powershell -ExecutionPolicy Bypass -File tests\ejecutar-fase3.ps1 [-SinNavegador] [-Brave "C:\ruta\brave.exe"]
+# Uso: powershell -ExecutionPolicy Bypass -File tests\ejecutar-fase3.ps1 [-SinNavegador] [-Solo tecnico,planificador] [-Brave "C:\ruta\brave.exe"]
+#   -Solo: lista de ciclos a lanzar (clientes2, maquinas2, tablero2, tablero2nav, planificador, planificadornav, tecnico, karve, migraciones); sin él, todos.
 param(
   [string]$Brave = "C:\Program Files\BraveSoftware\Brave-Browser\Application\brave.exe",
-  [switch]$SinNavegador
+  [switch]$SinNavegador,
+  [string[]]$Solo = @()
 )
 $ErrorActionPreference = 'Continue'
 $raiz = Split-Path $PSScriptRoot -Parent
@@ -41,7 +43,10 @@ function Ejecutar-Script($nombre) {
   }
 }
 
+function Quiere($nombre) { return ($Solo.Count -eq 0) -or ($Solo -contains $nombre) }
+
 function Ciclo($nombre, $scripts) {
+  if (-not (Quiere $nombre)) { return }
   $db = Join-Path $tmp "$nombre.db"
   Get-ChildItem -Path $tmp -Filter "$nombre.db*" -ErrorAction SilentlyContinue | Remove-Item -Force
   $env:PORT = '5055'; $env:RUTA_BD = $db; $env:APP_USUARIO = 'admin_prueba'; $env:APP_CLAVE = 'clave-prueba-123'
@@ -78,19 +83,26 @@ Ciclo 'tablero2' @('cliente-prueba-tablero2.js')
 Ciclo 'tablero2nav' @('navegador-prueba-tablero2.js')   # base aparte: el arnés HTTP deja el seed cambiado y el de navegador cuenta tarjetas del seed
 Ciclo 'planificador' @('cliente-prueba-planificador.js')
 Ciclo 'planificadornav' @('navegador-prueba-planificador.js')
+Ciclo 'tecnico' @('cliente-prueba-tecnico.js')
 
-if (Select-String -Path (Join-Path $raiz '.env') -Pattern '^KARVE_COPIA_CONNECTION_STRING=' -Quiet -ErrorAction SilentlyContinue) {
+if (-not (Quiere 'karve')) { }
+elseif (Select-String -Path (Join-Path $raiz '.env') -Pattern '^KARVE_COPIA_CONNECTION_STRING=' -Quiet -ErrorAction SilentlyContinue) {
   Ciclo 'karve' @('cliente-prueba-karve.js', 'cliente-prueba-importar-ot.js', 'navegador-prueba-karve.js')
 } else { $script:resumen += 'ciclo karve : omitido (sin KARVE_COPIA_CONNECTION_STRING en el .env)' }
 
-Write-Host "`n### Migración de roles (base sintética)" -ForegroundColor Green
-$env:RUTA_BD = Join-Path $tmp 'migracion.db'; $env:APP_USUARIO = 'jefe'
-Ejecutar-Script 'prueba-migracion-roles.js'
-Write-Host "`n### Migración del Tablero v2 (base con los estados antiguos)" -ForegroundColor Green
-$env:RUTA_BD = Join-Path $tmp 'migracion-tablero.db'; $env:APP_USUARIO = 'admin_prueba'; $env:APP_CLAVE = 'clave-prueba-123'
-Ejecutar-Script 'prueba-migracion-tablero.js'
-$env:RUTA_BD = Join-Path $tmp 'numeracion.db'; $env:APP_USUARIO = 'admin_prueba'; $env:APP_CLAVE = 'clave-prueba-123'
-Ejecutar-Script 'prueba-numeracion-y-limpiar.js'
+if (Quiere 'migraciones') {
+  Write-Host "`n### Migración de roles (base sintética)" -ForegroundColor Green
+  $env:RUTA_BD = Join-Path $tmp 'migracion.db'; $env:APP_USUARIO = 'jefe'
+  Ejecutar-Script 'prueba-migracion-roles.js'
+  Write-Host "`n### Migración del Tablero v2 (base con los estados antiguos)" -ForegroundColor Green
+  $env:RUTA_BD = Join-Path $tmp 'migracion-tablero.db'; $env:APP_USUARIO = 'admin_prueba'; $env:APP_CLAVE = 'clave-prueba-123'
+  Ejecutar-Script 'prueba-migracion-tablero.js'
+  $env:RUTA_BD = Join-Path $tmp 'numeracion.db'; $env:APP_USUARIO = 'admin_prueba'; $env:APP_CLAVE = 'clave-prueba-123'
+  Ejecutar-Script 'prueba-numeracion-y-limpiar.js'
+  Write-Host "`n### Bloques automáticos de la importación de Karve (base sintética, sin Karve)" -ForegroundColor Green
+  $env:RUTA_BD = Join-Path $tmp 'bloques-auto.db'; $env:APP_USUARIO = 'admin_prueba'; $env:APP_CLAVE = 'clave-prueba-123'
+  Ejecutar-Script 'prueba-bloques-automaticos.js'
+}
 
 if ($brv) { Stop-Process -Id $brv.Id -Force -ErrorAction SilentlyContinue; Matar-Puerto 9333 }
 

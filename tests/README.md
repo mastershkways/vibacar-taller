@@ -8,17 +8,19 @@ Arneses automáticos sin dependencias extra: Node 22 (`fetch` y `WebSocket` nati
 powershell -ExecutionPolicy Bypass -File tests\ejecutar-fase3.ps1
 ```
 
-Opciones: `-SinNavegador` (solo HTTP y migración), `-Brave "C:\ruta\brave.exe"` (por defecto Brave en `Program Files`; vale Chrome o Edge). Las bases temporales, los logs del servidor y el perfil del navegador van a `%TEMP%\vibacar-taller-pruebas`; las capturas a `tests/capturas-*/` (ignoradas por git).
+Opciones: `-SinNavegador` (solo HTTP y migración), `-Solo tecnico,planificador` (solo esos ciclos: clientes2, maquinas2, tablero2, tablero2nav, planificador, planificadornav, tecnico, karve, migraciones), `-Brave "C:\ruta\brave.exe" (por defecto Brave en `Program Files`; vale Chrome o Edge). Las bases temporales, los logs del servidor y el perfil del navegador van a `%TEMP%\vibacar-taller-pruebas`; las capturas a `tests/capturas-*/` (ignoradas por git).
 
-El lanzador ejecuta tres ciclos con base limpia (el de Karve solo si el `.env` tiene `KARVE_COPIA_CONNECTION_STRING`) y dos pruebas sueltas sobre bases sintéticas:
+El lanzador ejecuta un ciclo con base limpia por fila (el de Karve solo si el `.env` tiene `KARVE_COPIA_CONNECTION_STRING`) y las pruebas sueltas sobre bases sintéticas (grupo `migraciones`):
 
 | Ciclo | Base | Scripts | Qué cubre |
 |---|---|---|---|
 | clientes2 | seed | `cliente-prueba-clientes2.js` + `navegador-prueba-clientes2.js` | F3-02 menú Maestros, pantallas sin avisos ni chips; F3-03 clientes v2, contactos, regla de 3 años |
 | maquinas2 | seed | `cliente-prueba-maquinas2.js` + `navegador-prueba-maquinas2.js` + `navegador-colores.js` + `cliente-prueba-numeracion.js` | F3-04 máquinas v2, nº de flota, edición restringida; F3-05 roles y alcances; F3-01 colores; F3.5-05 numeración de O.T. con Karve |
-| karve | seed + Karve real | `cliente-prueba-karve.js` + `cliente-prueba-importar-ot.js` + `navegador-prueba-karve.js` | F3.5-03/04 sincronización de clientes, contactos y máquinas; F3.5-06 nº de flota y paginación; F3.6-01 importación de O.T. vivas; F3.6-02 cerradas recientes en el Kanban |
+| karve | seed + Karve real | `cliente-prueba-karve.js` + `cliente-prueba-importar-ot.js` + `navegador-prueba-karve.js` | F3.5-03/04 sincronización de clientes, contactos y máquinas; F3.5-06 nº de flota y paginación; F3.6-01 importación de O.T. vivas; F3.6-02 cerradas recientes en el Kanban; F4-13 bloques automáticos con un técnico que lleva un código de operario real |
 | tablero2 / tablero2nav | seed (una base por arnés) | `cliente-prueba-tablero2.js` · `navegador-prueba-tablero2.js` | F4-01/F4-04: verticales + etiquetas, flujo libre con límites por rol, modal de dos preguntas, filtros, "tu vertical", cerradas fuera del Tablero, rol operativo |
 | planificador / planificadornav | seed (una base por arnés) | `cliente-prueba-planificador.js` · `navegador-prueba-planificador.js` | F4-02/F4-03: calendario Día y Semana, bandeja, bloques (crear, mover, alargar, quitar), estado pendiente ↔ planificada, técnico derivado, propuestas (repuesto recibido), preplanificar pausadas, avisos de zonas / horas / solape, alcance del operativo, solo lectura de gerencia |
+| tecnico | seed | `cliente-prueba-tecnico.js` | F4-05/F4-06 (servidor): `GET /api/mi-dia`, cronómetro por tramos (fases, un solo cronómetro por técnico, parar por hoy), checklist del preventivo, requisitos para finalizar y "forzar" de la oficina, cierre de tramos al pausar o finalizar, alcance con varios técnicos en una O.T., cronómetro en Tablero y Planificador |
+| bloques automáticos | sintética | `prueba-bloques-automaticos.js` | F4-13 sin Karve: bloque en la fecha prevista, reparto por capacidad de las vencidas (urgentes primero, 4 por día, sin fines de semana, horizonte de 20 días), repetición sin cambios, cambios de fecha / operario / estado, respeto de lo tocado a mano |
 | migración | sintética | `prueba-migracion-roles.js` | F3-05/F4-12: `admontaller`/`financiero`/`gestor_sat` → roles nuevos en usuarios y transiciones |
 | migración Tablero | sintética | `prueba-migracion-tablero.js` | F4-04: los 10 estados antiguos → 5 verticales + etiquetas; O.T. recolocadas (también por `karve_estado`); historial legible |
 | numeración | sintética | `prueba-numeracion-y-limpiar.js` | F3.5-05: migración `AAAA-NNNN` → 10 dígitos, generador con mínimo de Karve, `fijar-contador`, purga `--limpiar` |

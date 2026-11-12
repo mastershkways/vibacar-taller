@@ -248,6 +248,58 @@ CREATE TABLE IF NOT EXISTS ot_bloques (
 CREATE INDEX IF NOT EXISTS idx_ot_bloques_ot ON ot_bloques(ot_id);
 CREATE INDEX IF NOT EXISTS idx_ot_bloques_tecnico_dia ON ot_bloques(tecnico_id, dia);
 
+-- F4-06: cronómetro del técnico, por tramos. Cada tramo es un intervalo de un tipo (desplazamiento, espera de acceso, trabajo);
+-- fin NULL = en marcha. Un técnico solo puede tener un tramo abierto (índice único parcial). La hora la pone el servidor.
+CREATE TABLE IF NOT EXISTS ot_tiempos (
+  id          INTEGER PRIMARY KEY AUTOINCREMENT,
+  ot_id       INTEGER NOT NULL REFERENCES ot(id) ON DELETE CASCADE,
+  tecnico_id  INTEGER NOT NULL REFERENCES usuarios(id),
+  bloque_id   INTEGER REFERENCES ot_bloques(id) ON DELETE SET NULL,  -- bloque del Planificador al que corresponde (previsto frente a real)
+  tipo        TEXT    NOT NULL,                 -- desplazamiento | espera | trabajo
+  inicio      TEXT    NOT NULL,
+  fin         TEXT,                             -- NULL = cronómetro en marcha
+  cierre      TEXT,                             -- cómo se cerró: cambio (de fase) | parar (por hoy) | pausa | fin | estado | otra_ot
+  origen      TEXT    NOT NULL DEFAULT 'crono', -- crono | manual (correcciones de fichaje, F4-08)
+  revisar     INTEGER NOT NULL DEFAULT 0,       -- 1 = tramo sospechoso (cerrado otro día o de más de 12 h): para las incidencias de fichaje
+  nota        TEXT,
+  creado      TEXT    NOT NULL DEFAULT (datetime('now','localtime'))
+);
+CREATE INDEX IF NOT EXISTS idx_ot_tiempos_ot ON ot_tiempos(ot_id);
+CREATE INDEX IF NOT EXISTS idx_ot_tiempos_tecnico ON ot_tiempos(tecnico_id, inicio);
+CREATE INDEX IF NOT EXISTS idx_ot_tiempos_bloque ON ot_tiempos(bloque_id);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_ot_tiempos_abierto ON ot_tiempos(tecnico_id) WHERE fin IS NULL;
+
+-- F4-05: checklist. Plantillas por tipo de O.T. (preventivo...) con sus puntos; al abrir la O.T. se copian a ot_checklist para que
+-- cambiar la plantilla no altere las O.T. ya hechas. resultado NULL = sin responder.
+CREATE TABLE IF NOT EXISTS checklist_plantillas (
+  id       INTEGER PRIMARY KEY AUTOINCREMENT,
+  codigo   TEXT    NOT NULL UNIQUE,
+  nombre   TEXT    NOT NULL,
+  tipo_ot  TEXT    NOT NULL,                    -- tipo de O.T. al que se aplica (preventivo | correctivo)
+  semilla  INTEGER NOT NULL DEFAULT 0,          -- 1 = plantilla genérica de arranque, a sustituir por la lista real de Vibacar
+  activo   INTEGER NOT NULL DEFAULT 1,
+  creado   TEXT    NOT NULL DEFAULT (datetime('now','localtime'))
+);
+CREATE TABLE IF NOT EXISTS checklist_puntos (
+  id            INTEGER PRIMARY KEY AUTOINCREMENT,
+  plantilla_id  INTEGER NOT NULL REFERENCES checklist_plantillas(id) ON DELETE CASCADE,
+  orden         INTEGER NOT NULL DEFAULT 1,
+  texto         TEXT    NOT NULL,
+  activo        INTEGER NOT NULL DEFAULT 1
+);
+CREATE TABLE IF NOT EXISTS ot_checklist (
+  id            INTEGER PRIMARY KEY AUTOINCREMENT,
+  ot_id         INTEGER NOT NULL REFERENCES ot(id) ON DELETE CASCADE,
+  plantilla_id  INTEGER REFERENCES checklist_plantillas(id),
+  orden         INTEGER NOT NULL DEFAULT 1,
+  texto         TEXT    NOT NULL,
+  resultado     TEXT,                           -- hecho | no_aplica | incidencia (NULL = sin responder)
+  nota          TEXT,
+  usuario_id    INTEGER REFERENCES usuarios(id),
+  fecha         TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_ot_checklist_ot ON ot_checklist(ot_id);
+
 CREATE TABLE IF NOT EXISTS sincronizaciones (
   id          INTEGER PRIMARY KEY AUTOINCREMENT,
   inicio      TEXT    NOT NULL,
@@ -305,6 +357,9 @@ const COLUMNAS_NUEVAS = [
   // la etiqueta que tenía (repuesto → "Repuesto recibido") y cuándo; se borra al planificarla o al cambiar otra vez de estado.
   ['ot', 'propuesta', 'TEXT'],
   ['ot', 'propuesta_fecha', 'TEXT'],
+  // Fase 4 (F4-13): quién creó el bloque. karve = automático al importar la O.T. de Karve (la importación puede moverlo o quitarlo
+  // mientras nadie lo toque); manual = puesto o movido por una persona (la importación no lo toca).
+  ['ot_bloques', 'origen', "TEXT NOT NULL DEFAULT 'manual'"],
 ];
 
 function asegurarColumna(tabla, columna, definicion) {
@@ -453,6 +508,12 @@ const ETIQUETAS_SEMILLA = [
   ['anulada',        'Anulada',                    'cerrada',    3, null,             '#9ca3af'],
 ];
 
+// F4-05: plantilla genérica de checklist para los preventivos (ejemplo de Sendoa, 2026-11-12), hasta tener la lista real de Vibacar.
+const CHECKLIST_SEMILLA = {
+  codigo: 'preventivo_generico', nombre: 'Mantenimiento preventivo (genérica)', tipo_ot: 'preventivo',
+  puntos: ['Revisión visual', 'Niveles', 'Engrase', 'Pruebas de funcionamiento'],
+};
+
 // OFICINA = los que mandan sobre la O.T. (F3-05); se usa al migrar transiciones antiguas. Desde F4-04 el flujo es libre.
 const OFICINA = ['administrativo', 'responsable_st', 'operativo'];
 
@@ -477,6 +538,12 @@ const sembrar = db.transaction(() => {
     for (const t of ETIQUETAS_SEMILLA) ins.run(...t);
     console.log(`   BD: cargadas ${ETIQUETAS_SEMILLA.length} etiquetas`);
   }
+  if (tablaVacia('checklist_plantillas')) {
+    const info = db.prepare('INSERT INTO checklist_plantillas (codigo, nombre, tipo_ot, semilla) VALUES (?, ?, ?, 1)').run(CHECKLIST_SEMILLA.codigo, CHECKLIST_SEMILLA.nombre, CHECKLIST_SEMILLA.tipo_ot);
+    const ins = db.prepare('INSERT INTO checklist_puntos (plantilla_id, orden, texto) VALUES (?, ?, ?)');
+    CHECKLIST_SEMILLA.puntos.forEach((texto, i) => ins.run(info.lastInsertRowid, i + 1, texto));
+    console.log(`   BD: cargada la plantilla de checklist "${CHECKLIST_SEMILLA.nombre}" (${CHECKLIST_SEMILLA.puntos.length} puntos)`);
+  }
   if (tablaVacia('usuarios')) {
     const usuario = (process.env.APP_USUARIO || '').trim();
     const clave = process.env.APP_CLAVE || '';
@@ -492,4 +559,4 @@ const sembrar = db.transaction(() => {
 
 migrar();
 
-module.exports = { db, migrar, ahora, hashClave, verificarClave, ROLES, RUTA_BD, ESTADO_V2_POR_ANTIGUO };
+module.exports = { db, migrar, ahora, hashClave, verificarClave, ROLES, RUTA_BD, ESTADO_V2_POR_ANTIGUO, CHECKLIST_SEMILLA };

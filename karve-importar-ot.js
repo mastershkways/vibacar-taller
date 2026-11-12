@@ -31,15 +31,27 @@ const ESTADO_LOCAL = {
 // Repeticiones: una O.T. ya importada y no tocada en la app (origen 'karve' y version 1) se actualiza con lo que diga
 // Karve; si alguien la ha modificado aquí (version > 1) o la creó la app, se conserva y se cuenta como "conservada".
 // Todo en una transacción; `simular: true` la deshace al final.
+//
+// F4-13: bloques automáticos en el Planificador. Tras importar, cada O.T. planificada, no tocada en la app y con técnico local
+// (usuario con ese código de operario) recibe un bloque de 2 h con `origen = 'karve'`, sin subir su versión:
+//   - si su fecha prevista es de hoy en adelante, ese día, detrás de lo que ya tenga el técnico;
+//   - si la fecha prevista ya pasó (en Karve es casi siempre la fecha de alta: no hay horas previstas ni fechas futuras), se
+//     reparte por capacidad: primer día laborable desde mañana en el que al técnico le queden 2 h de jornada, por prioridad y
+//     antigüedad, hasta 20 días laborables; lo que no quepa se queda en la bandeja. `repartir: false` deja las vencidas en la bandeja.
+// Mientras la O.T. siga sin tocar, la importación mantiene su bloque automático: lo quita si deja de estar planificada, cambia
+// de operario o de fecha, o si el bloque ya ha pasado sin empezarse (y la vuelve a colocar). Un bloque movido a mano o una O.T.
+// tocada en la app ya no se tocan. Las planificadas de operarios genéricos (TALLER, MANTENIMIENTOS…) no tienen técnico: bandeja.
 
 const { db, ahora } = require('./db');
 const karve = require('./karve');
+const plan = require('./rutas-planificador');
 
 const LOCAL_POR_KARVE = new Map();
 for (const [local, nombres] of Object.entries(ESTADO_LOCAL)) for (const n of nombres) LOCAL_POR_KARVE.set(n, local);
 const ALBARANES_PREVENTIVO = new Set(['mp', 'mpa', 'mpr']);
 const CERRADAS_DEFECTO = 150;
 const CERRADAS_MAX = 2000;
+const HORIZONTE_LABORABLES = 20;   // F4-13: hasta cuántos días laborables se reparten las O.T. con la fecha prevista vencida
 
 const COLUMNAS = 'id, fecha, hora, fechaPrevista, horaPrevista, cliente, maquina, operarioAsignado, nomOperarioAsignado, fechaAsignacion, urgente, mantenimiento, tipoAlbaran, nomTipoAlbaran, nomEstado, avisos, descripcionBreve, observaciones, anomaliasDetectadas, persona, ubicacion, referencia, presupuesto, pedidoCliente, fechaCierre, factura, anulada';
 
@@ -196,18 +208,90 @@ function aplicar(datos, resumen, avisar) {
   if (resumen.estados_desconocidos.size) avisar(`Estados de Karve sin mapeo (van a "Pendiente de planificar"): ${[...resumen.estados_desconocidos].join(', ')}`);
 }
 
-async function importar({ entorno = 'copia', cerradas = CERRADAS_DEFECTO, origen = 'manual', usuarioId = null, simular = false } = {}) {
+// ---------------------------------------------------------------------------
+// F4-13: bloques automáticos para las O.T. planificadas, no tocadas y con técnico. Dentro de la transacción de la importación.
+// ---------------------------------------------------------------------------
+const dos = (n) => String(n).padStart(2, '0');
+const fechaISO = (d) => `${d.getFullYear()}-${dos(d.getMonth() + 1)}-${dos(d.getDate())}`;
+function laborablesDesde(iso, n) {          // los n días laborables siguientes a `iso` (sin contarlo)
+  const [a, m, d] = iso.split('-').map(Number);
+  const f = new Date(a, m - 1, d);
+  const dias = [];
+  while (dias.length < n) { f.setDate(f.getDate() + 1); if (f.getDay() !== 0 && f.getDay() !== 6) dias.push(fechaISO(f)); }
+  return dias;
+}
+
+function planificarAutomaticas(r, { repartir = true, hoy = fechaISO(new Date()) } = {}) {
+  const duracion = plan.DURACION_DEFECTO;
+  const capacidad = plan.JORNADA.horas_dia * 60;
+
+  // 1) Bloques automáticos de O.T. no tocadas que ya no valen: se quitan (si la O.T. sigue siendo candidata, se recoloca abajo).
+  const autos = db.prepare(`
+    SELECT b.id, b.tecnico_id, b.dia, o.estado, o.tecnico_id AS ot_tecnico, o.fecha_prevista, u.activo
+      FROM ot_bloques b JOIN ot o ON o.id = b.ot_id JOIN usuarios u ON u.id = b.tecnico_id
+     WHERE b.origen = 'karve' AND o.origen = 'karve' AND o.version = 1`).all();
+  const borrar = db.prepare('DELETE FROM ot_bloques WHERE id = ?');
+  for (const a of autos) {
+    const enSuFecha = !(a.fecha_prevista && a.fecha_prevista >= hoy && a.dia !== a.fecha_prevista);
+    const vale = a.estado === 'planificada' && a.ot_tecnico === a.tecnico_id && a.activo === 1 && a.dia >= hoy && enSuFecha;
+    if (!vale) { borrar.run(a.id); r.quitados++; }
+  }
+
+  // 2) Candidatas: planificadas de Karve, no tocadas, con técnico activo y sin ningún bloque.
+  const candidatas = db.prepare(`
+    SELECT o.id, o.estado, o.tecnico_id, o.fecha_prevista
+      FROM ot o JOIN usuarios u ON u.id = o.tecnico_id AND u.activo = 1 AND u.rol IN ('tecnico', 'sat')
+     WHERE o.origen = 'karve' AND o.version = 1 AND o.estado = 'planificada'
+       AND NOT EXISTS (SELECT 1 FROM ot_bloques b WHERE b.ot_id = o.id)
+     ORDER BY o.prioridad, COALESCE(o.fecha_prevista, '9999'), o.id`).all();
+  const dias = laborablesDesde(hoy, HORIZONTE_LABORABLES);
+  const puntero = new Map();               // por técnico: primer día del reparto en el que aún puede caber algo
+  // Primero las que tienen fecha: ocupan su día. Después el reparto de las vencidas rellena lo que quede libre.
+  const conFecha = candidatas.filter((ot) => ot.fecha_prevista && ot.fecha_prevista >= hoy);
+  for (const ot of conFecha) {
+    const h = plan.huecoPara(ot.tecnico_id, ot.fecha_prevista, duracion);
+    plan.crearBloqueAutomatico(ot, { tecnico_id: ot.tecnico_id, dia: ot.fecha_prevista, hora_inicio: h.hora_inicio, duracion_min: duracion });
+    r.en_fecha++;
+  }
+  for (const ot of candidatas) {
+    if (ot.fecha_prevista && ot.fecha_prevista >= hoy) continue;
+    if (!repartir) { r.sin_repartir++; continue; }
+    let i = puntero.get(ot.tecnico_id) || 0;
+    let puesta = false;
+    for (; i < dias.length; i++) {
+      const h = plan.huecoPara(ot.tecnico_id, dias[i], duracion);
+      if (h.ocupado_min + duracion > capacidad) continue;
+      plan.crearBloqueAutomatico(ot, { tecnico_id: ot.tecnico_id, dia: dias[i], hora_inicio: h.hora_inicio, duracion_min: duracion });
+      puesta = true;
+      break;
+    }
+    puntero.set(ot.tecnico_id, i);
+    if (puesta) r.repartidas++; else r.sin_hueco++;
+  }
+  r.sin_tecnico = db.prepare("SELECT COUNT(*) AS n FROM ot WHERE origen = 'karve' AND version = 1 AND estado = 'planificada' AND tecnico_id IS NULL").get().n;
+  return r;
+}
+
+async function importar({ entorno = 'copia', cerradas = CERRADAS_DEFECTO, origen = 'manual', usuarioId = null, simular = false, bloques = true, repartir = true } = {}) {
   if (enCurso) { const e = new Error('Ya hay una importación de O.T. en curso'); e.codigo = 'EN_CURSO'; throw e; }
   cerradas = Math.max(0, Math.min(CERRADAS_MAX, Number.parseInt(cerradas, 10) || 0));
   enCurso = true;
   const inicio = ahora();
   const t0 = Date.now();
   const contador = () => ({ leidas: 0, nuevas: 0, actualizadas: 0, sin_cambios: 0, conservadas: 0, sin_cliente: 0, sin_maquina: 0, omitidas_numero: 0 });
-  const resumen = { entorno, origen, simulado: simular, cerradas_pedidas: cerradas, inicio, fin: null, duracion_ms: 0, vivas: contador(), cerradas: contador(), por_estado: {}, estados_desconocidos: new Set(), avisos: [] };
+  const resumen = { entorno, origen, simulado: simular, cerradas_pedidas: cerradas, inicio, fin: null, duracion_ms: 0, vivas: contador(), cerradas: contador(), por_estado: {}, estados_desconocidos: new Set(), avisos: [],
+    bloques: { activo: bloques, repartir, en_fecha: 0, repartidas: 0, quitados: 0, sin_hueco: 0, sin_repartir: 0, sin_tecnico: 0 } };
   const avisar = (t) => resumen.avisos.push(t);
   try {
     const datos = await leerKarve(entorno, cerradas);
-    const tx = db.transaction(() => { aplicar(datos, resumen, avisar); if (simular) throw new Simulacion('simulación'); });
+    const tx = db.transaction(() => {
+      aplicar(datos, resumen, avisar);
+      if (bloques) {
+        planificarAutomaticas(resumen.bloques, { repartir });
+        if (resumen.bloques.sin_hueco) avisar(`${resumen.bloques.sin_hueco} O.T. planificadas no caben en los próximos ${HORIZONTE_LABORABLES} días laborables de su técnico: se quedan en la bandeja del Planificador`);
+      }
+      if (simular) throw new Simulacion('simulación');
+    });
     try { tx(); } catch (e) { if (!(e instanceof Simulacion)) throw e; }
     resumen.estados_desconocidos = [...resumen.estados_desconocidos];
     resumen.fin = ahora();
@@ -226,4 +310,4 @@ async function importar({ entorno = 'copia', cerradas = CERRADAS_DEFECTO, origen
   }
 }
 
-module.exports = { importar, estaEnCurso, ESTADO_LOCAL, CERRADAS_DEFECTO };
+module.exports = { importar, estaEnCurso, planificarAutomaticas, laborablesDesde, ESTADO_LOCAL, CERRADAS_DEFECTO, HORIZONTE_LABORABLES };

@@ -11,6 +11,8 @@
 //   - `ot.tecnico_id` se deriva del próximo bloque (hoy o posterior). Cada cambio sube `ot.version` y deja línea en el historial.
 //   - Avisos (no bloquean): más horas previstas que la jornada, dos o más zonas el mismo día, bloques solapados.
 //   - Quien planifica ve la ocupación de todos los técnicos; solo puede tocar los bloques de las O.T. de su alcance.
+//   - F4-13: los bloques que crea la importación de Karve llevan `origen = 'karve'` y no suben la versión de la O.T. (así la
+//     importación la sigue considerando "no tocada" y puede moverlos). En cuanto alguien mueve uno pasa a `manual`.
 
 const express = require('express');
 const crypto = require('crypto');
@@ -18,6 +20,7 @@ const { db, ahora } = require('./db');
 const { requierePermiso } = require('./permisos');
 const { ErrorHttp, texto, entero, idRuta } = require('./validar');
 const rutasOT = require('./rutas-ot');
+const tiempos = require('./tiempos');
 
 const esHora = (s) => typeof s === 'string' && /^([01]\d|2[0-3]):[0-5]\d$/.test(s);
 const horaEnv = (valor, defecto) => (esHora((valor || '').trim()) ? valor.trim() : defecto);
@@ -32,6 +35,7 @@ const DURACION_MIN = 15;
 const DURACION_MAX = 720;
 const RANGO_MAX_DIAS = 31;
 const BANDEJA_MAX = 500;
+const PRIMER_HUECO = 8 * 60;    // los bloques automáticos se apilan desde las 08:00
 
 // ---------------------------------------------------------------------------
 // Utilidades de fecha y hora (todo en hora local, como el resto de la app)
@@ -78,6 +82,9 @@ const stmt = {
   historial: db.prepare('INSERT INTO ot_historial (ot_id, estado_anterior, estado_nuevo, usuario_id, fecha, nota) VALUES (?, ?, ?, ?, ?, ?)'),
   insertar: db.prepare(`INSERT INTO ot_bloques (ot_id, tecnico_id, dia, hora_inicio, duracion_min, orden, nota, creado_por, creado)
                         VALUES (?, ?, ?, ?, ?, (SELECT COALESCE(MAX(orden), 0) + 1 FROM ot_bloques WHERE tecnico_id = ? AND dia = ?), ?, ?, ?)`),
+  insertarAuto: db.prepare(`INSERT INTO ot_bloques (ot_id, tecnico_id, dia, hora_inicio, duracion_min, orden, origen, creado_por, creado)
+                            VALUES (?, ?, ?, ?, ?, (SELECT COALESCE(MAX(orden), 0) + 1 FROM ot_bloques WHERE tecnico_id = ? AND dia = ?), 'karve', NULL, ?)`),
+  historialAuto: db.prepare('INSERT INTO ot_historial (ot_id, estado_anterior, estado_nuevo, usuario_id, fecha, nota) VALUES (?, ?, ?, NULL, ?, ?)'),
   bloquesDia: db.prepare(`
     SELECT b.id, b.ot_id, b.hora_inicio, b.duracion_min, c.zona AS cliente_zona, o.numero
       FROM ot_bloques b JOIN ot o ON o.id = b.ot_id JOIN clientes c ON c.id = o.cliente_id
@@ -180,6 +187,29 @@ function quitarBloque(otId, bloque, usuario) {
   }).immediate();
 }
 
+// ---------------------------------------------------------------------------
+// F4-13: bloques automáticos (los crea la importación de O.T. de Karve)
+// ---------------------------------------------------------------------------
+
+// Hueco para un bloque nuevo de un técnico en un día: detrás del último que tenga (desde las 08:00), sin pasar de medianoche.
+// Devuelve también los minutos ya ocupados ese día, para repartir por capacidad.
+function huecoPara(tecnicoId, dia, duracion = DURACION_DEFECTO) {
+  const bloques = stmt.bloquesDia.all(tecnicoId, dia);
+  const ocupado = bloques.reduce((n, b) => n + b.duracion_min, 0);
+  let inicio = bloques.reduce((fin, b) => Math.max(fin, minutos(b.hora_inicio) + b.duracion_min), PRIMER_HUECO);
+  inicio = Math.min(Math.ceil(inicio / 15) * 15, 24 * 60 - duracion);
+  return { hora_inicio: horaDe(inicio), ocupado_min: ocupado };
+}
+
+// Crea un bloque automático: no sube la versión de la O.T. ni cambia su estado ni su técnico (ya vienen de Karve); deja línea
+// en el historial sin usuario. Debe ejecutarse dentro de una transacción.
+function crearBloqueAutomatico(ot, campos) {
+  const tecnico = stmt.usuario.get(campos.tecnico_id);
+  const info = stmt.insertarAuto.run(ot.id, campos.tecnico_id, campos.dia, campos.hora_inicio, campos.duracion_min, campos.tecnico_id, campos.dia, ahora());
+  stmt.historialAuto.run(ot.id, ot.estado, ot.estado, ahora(), `Planificada automáticamente (Karve): ${textoBloque(campos, tecnico ? tecnico.nombre : '')}`);
+  return info.lastInsertRowid;
+}
+
 function respuesta(req, otId, bloqueId, tecnicoId, dia) {
   const tecnico = stmt.usuario.get(tecnicoId);
   return {
@@ -211,18 +241,23 @@ module.exports = function montarRutasPlanificador(app) {
     const firmaB = db.prepare(`SELECT COUNT(*) AS n, COALESCE(SUM(id), 0) AS s, COALESCE(MAX(COALESCE(actualizado, creado)), '') AS m FROM ot_bloques`).get();
     const firmaO = db.prepare(`SELECT COUNT(*) AS n, COALESCE(SUM(o.version), 0) AS v FROM ot o JOIN estados e ON e.codigo = o.estado JOIN fases fa ON fa.codigo = e.fase WHERE fa.abierta = 1`).get();
     const firmaT = db.prepare(`SELECT COUNT(*) AS n, COALESCE(SUM(id), 0) AS s FROM usuarios WHERE activo = 1 AND rol IN ('tecnico', 'sat')`).get();
-    const etag = `"${crypto.createHash('sha1').update(`plan|${firmaB.n}|${firmaB.s}|${firmaB.m}|${firmaO.n}|${firmaO.v}|${firmaT.n}|${firmaT.s}|${desde}|${hasta}|${conPausadas}|${hoyIso}|${req.usuario.rol}|${req.usuario.id}`).digest('hex').slice(0, 20)}"`;
+    const firmaC = db.prepare('SELECT COUNT(*) AS n, COUNT(fin) AS c, COALESCE(MAX(id), 0) AS m FROM ot_tiempos').get();   // F4-06: cronómetro (previsto frente a real)
+    const etag = `"${crypto.createHash('sha1').update(`plan|${firmaB.n}|${firmaB.s}|${firmaB.m}|${firmaO.n}|${firmaO.v}|${firmaT.n}|${firmaT.s}|${firmaC.n}|${firmaC.c}|${firmaC.m}|${desde}|${hasta}|${conPausadas}|${hoyIso}|${req.usuario.rol}|${req.usuario.id}`).digest('hex').slice(0, 20)}"`;
     if (req.headers['if-none-match'] === etag) return res.status(304).end();
 
     // Bloques del rango, con los datos de su O.T. `fuera_alcance` = 1 si la O.T. no es de quien mira (ve la ocupación, no puede tocarla).
+    // `origen` = karve si lo puso la importación (F4-13); `real_seg` = segundos fichados contra ese bloque y `crono_tipo` = fase
+    // del cronómetro si la O.T. lo tiene en marcha (F4-06).
     const bloques = db.prepare(`
-      SELECT b.id, b.ot_id, b.tecnico_id, u.nombre AS tecnico_nombre, b.dia, b.hora_inicio, b.duracion_min, b.orden, b.nota,
-             CASE WHEN 1 = 1${f.sql} THEN 0 ELSE 1 END AS fuera_alcance,${CAMPOS_OT}
+      SELECT b.id, b.ot_id, b.tecnico_id, u.nombre AS tecnico_nombre, b.dia, b.hora_inicio, b.duracion_min, b.orden, b.nota, b.origen,
+             CASE WHEN 1 = 1${f.sql} THEN 0 ELSE 1 END AS fuera_alcance,
+             (SELECT COALESCE(SUM(${tiempos.SEGUNDOS('COALESCE(x.fin, ?)', 'x.inicio')}), 0) FROM ot_tiempos x WHERE x.bloque_id = b.id) AS real_seg,
+             (SELECT x.tipo FROM ot_tiempos x WHERE x.ot_id = b.ot_id AND x.fin IS NULL ORDER BY x.id DESC LIMIT 1) AS crono_tipo,${CAMPOS_OT}
         FROM ot_bloques b
         JOIN ot o ON o.id = b.ot_id
         JOIN usuarios u ON u.id = b.tecnico_id${JOINS_OT}
        WHERE b.dia BETWEEN ? AND ?
-       ORDER BY b.dia, b.hora_inicio, b.id`).all(...f.params, desde, hasta);
+       ORDER BY b.dia, b.hora_inicio, b.id`).all(...f.params, ahora(), desde, hasta);
 
     // Técnicos activos (internos primero, luego SAT) + los que ya no lo están pero tienen bloques en el rango.
     const tecnicos = stmt.tecnicos.all();
@@ -281,7 +316,8 @@ module.exports = function montarRutasPlanificador(app) {
     const nuevo = { ...actual, ...campos };
     const tecnico = stmt.usuario.get(nuevo.tecnico_id);
     db.transaction(() => {
-      db.prepare(`UPDATE ot_bloques SET ${columnas.map((c) => `${c} = ?`).join(', ')}, actualizado = ? WHERE id = ?`).run(...columnas.map((c) => campos[c]), ahora(), bid);
+      // F4-13: un bloque automático que alguien toca pasa a ser manual (la importación de Karve ya no lo mueve).
+      db.prepare(`UPDATE ot_bloques SET ${columnas.map((c) => `${c} = ?`).join(', ')}, origen = 'manual', actualizado = ? WHERE id = ?`).run(...columnas.map((c) => campos[c]), ahora(), bid);
       const soloNota = columnas.length === 1 && columnas[0] === 'nota';
       trasCambio(id, req.usuario, soloNota ? `Nota del bloque del ${diaCorto(nuevo.dia)}: ${nuevo.nota || '(sin nota)'}` : `Bloque movido: ${textoBloque(nuevo, tecnico.nombre)} (antes ${diaCorto(actual.dia)} ${actual.hora_inicio} · ${textoDuracion(actual.duracion_min)})`);
     }).immediate();
@@ -302,4 +338,4 @@ module.exports = function montarRutasPlanificador(app) {
 
   app.use('/api', r);
 };
-Object.assign(module.exports, { JORNADA, avisosDe, leerBloque, crearBloque, quitarBloque });
+Object.assign(module.exports, { JORNADA, DURACION_DEFECTO, avisosDe, leerBloque, crearBloque, quitarBloque, huecoPara, crearBloqueAutomatico });
