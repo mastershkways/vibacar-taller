@@ -3,7 +3,7 @@
 // Arranque: GET /api/sesion + GET /api/estados → estado global `S` → vista según el rol.
 //   responsable_st, operativo, gerencia → Planificador (calendario de bloques por técnico y día; F4-02)
 //   administrativo          → Tablero (verticales por estado) con polling cada 10 s (ETag / 304)
-//   tecnico, sat           → Mis O.T. (tablet: tarjetas y botones grandes)
+//   tecnico, sat           → Mi día (móvil y tablet: sus tareas, cronómetro y checklist; F4-05 / F4-06) y la ficha de trabajo
 //   recambista              → Tablero (su vertical es Pausada); comercial, comercial_jefe → Listado (tabla)
 // Las vistas son <template> del index.html que se clonan en <main id="app">.
 // Lo que se pinta depende de los permisos que devuelve el servidor; la barrera real está en la API.
@@ -28,6 +28,8 @@ const S = {
   clientes: { pagina: 1, limite: 50 },
   maquinas: { pagina: 1, limite: 50 },
   tecnicos: null,
+  // Técnico (F4-05 / F4-06): datos de GET /api/mi-dia, O.T. de la ficha de trabajo abierta, sondeo y contador de segundos
+  tec: { datos: null, etag: null, timer: null, tic: null, cargando: false, otId: null, ot: null },
 };
 
 const DIAS_CERRADAS = 0;     // F4-04: las cerradas desaparecen del Tablero (gerencia 2026-11-06); con N > 0 vuelve la columna con las de esos días
@@ -231,6 +233,7 @@ function abrirCambioEstado(ot, destino, { alTerminar = null, contenedorAvisos = 
     const nodo = tpl('tpl-cambio-estado');
     ref('titulo', nodo).textContent = `${ot.numero} → ${d.nombre}`;
     ref('desde', nodo).textContent = `Ahora: ${(S.estadoPor[ot.estado] || {}).nombre || ot.estado}${ot.etiqueta ? ' · ' + ((S.etiquetaPor[ot.etiqueta] || {}).nombre || ot.etiqueta) : ''}`;
+    if (S.sesion.alcance === 'asignadas' && destino === 'pausada') ref('desde', nodo).textContent += ' · Al pausar, la O.T. sale de tu tablero hasta que la oficina la vuelva a planificar.';
     const p1 = ref('pregunta-1', nodo);
     const sel = ref('opcion', nodo);
     const etiquetas = etiquetasDe(destino);
@@ -317,7 +320,7 @@ function mostrarErrorAccion(e, contenedorAvisos, alRecargar = null) {
 const VISTAS = {
   planificador: { titulo: 'Planificador', visible: () => puede('planificador.ver'), pintar: pintarPlanificador },
   kanban: { titulo: 'Tablero', visible: () => puede('kanban.ver'), pintar: pintarKanban },
-  misot: { titulo: 'Mis O.T.', visible: () => S.sesion.alcance === 'asignadas', pintar: pintarMisOT },
+  midia: { titulo: 'Mi día', visible: () => S.sesion.alcance === 'asignadas', pintar: pintarMiDia },
   listado: { titulo: 'Listado', visible: () => puede('ot.ver'), pintar: pintarListado },
   // Maestros: roles de oficina con clientes.ver / maquinas.ver; no en la tablet del técnico/SAT.
   clientes: { titulo: 'Clientes', grupo: 'Maestros', visible: () => puede('clientes.ver') && S.sesion.alcance !== 'asignadas', pintar: pintarClientes },
@@ -326,7 +329,7 @@ const VISTAS = {
 };
 
 function vistaPorDefecto() {
-  if (S.sesion.alcance === 'asignadas') return 'misot';
+  if (S.sesion.alcance === 'asignadas') return 'midia';
   // Home por rol (F4-02): quien reparte el trabajo (responsable, operativo) y gerencia entran en el Planificador;
   // administración y recambista, en el Tablero (cada uno con su vertical resaltada); comerciales, en el Listado.
   if (['responsable_st', 'operativo', 'gerencia'].includes(S.sesion.usuario.rol) && puede('planificador.ver')) return 'planificador';
@@ -428,6 +431,7 @@ function mostrarVista(nombre) {
   if (!VISTAS[nombre] || !VISTAS[nombre].visible()) nombre = vistaPorDefecto();
   pararPolling();
   pararPollingPlan();
+  pararTecnico();
   S.vista = nombre;
   for (const b of $$('#nav button[data-vista]')) b.classList.toggle('activo', b.dataset.vista === nombre);
   for (const m of $$('#nav .menu')) m.classList.toggle('activo', !!$(`button[data-vista="${nombre}"]`, m));
@@ -440,7 +444,7 @@ function mostrarVista(nombre) {
   VISTAS[nombre].pintar();
 }
 
-// Rutas por hash: #kanban | #misot | #listado | #ot/123 (detalle sobre la vista actual)
+// Rutas por hash: #kanban | #midia | #listado | #ot/123 (detalle sobre la vista actual) | #trabajo/123 (ficha de trabajo del técnico)
 function enrutar() {
   const h = location.hash.replace(/^#/, '');
   const m = h.match(/^ot\/(\d+)$/);
@@ -449,6 +453,8 @@ function enrutar() {
     abrirDetalle(Number(m[1]));
     return;
   }
+  const t = h.match(/^trabajo\/(\d+)$/);
+  if (t) { mostrarTrabajo(Number(t[1])); return; }
   mostrarVista(h || vistaPorDefecto());
 }
 
@@ -471,6 +477,8 @@ async function iniciar() {
   window.addEventListener('hashchange', enrutar);
   document.addEventListener('visibilitychange', () => {
     if (S.vista === 'planificador' && !document.hidden) recargarPlan(false);
+    if (S.vista === 'midia' && !document.hidden) cargarMiDia(false);
+    if (S.vista === 'trabajo' && !document.hidden) cargarTrabajo();
     if (S.vista !== 'kanban') return;
     if (document.hidden) pararPolling(); else { cargarKanban(); arrancarPolling(); }
   });
@@ -607,6 +615,7 @@ function tarjetaKanban(o) {
     ${o.sintoma ? `<div class="sintoma" title="${esc(o.sintoma)}">${esc(o.sintoma)}</div>` : ''}
     ${o.etiqueta ? `<div class="etiquetas">${chipEtiqueta(o)}</div>` : ''}
     ${nombreTecnico(o) ? `<div class="tecnico">${esc(nombreTecnico(o))}</div>` : ''}
+    ${o.crono_tipo && FASES[o.crono_tipo] ? `<div><span class="dato-chip fase-${esc(o.crono_tipo)}" title="Cronómetro en marcha">${FASES[o.crono_tipo].icono} ${esc(FASES[o.crono_tipo].nombre)} desde las ${esc(horaCorta(o.crono_inicio))}</span></div>` : ''}
     ${o.proximo_bloque
       ? `<div class="prevista proximo">📅 ${esc(fecha(o.proximo_bloque))}${o.proximo_tecnico ? ' · ' + esc(o.proximo_tecnico) : ''}${o.bloques_futuros > 1 ? ` <b title="Bloques planificados">+${o.bloques_futuros - 1}</b>` : ''}</div>`
       : (o.fecha_prevista ? `<div class="prevista">Prevista ${esc(fecha(o.fecha_prevista))}</div>` : '')}`;
@@ -881,10 +890,12 @@ function elementoBloque(b, { conAviso = false, editable = false, compacto = fals
   el.dataset.bloque = b.id;
   el.dataset.ot = b.ot_id;
   el.style.borderLeftColor = b.estado_color || '#6b7280';
-  el.title = `${b.numero} · ${b.cliente_nombre}${b.sintoma ? ' · ' + b.sintoma : ''}${b.nota ? ' · Nota: ' + b.nota : ''}`;
+  el.title = `${b.numero} · ${b.cliente_nombre}${b.sintoma ? ' · ' + b.sintoma : ''}${b.nota ? ' · Nota: ' + b.nota : ''}${b.real_seg ? ' · Fichado: ' + duracionSeg(b.real_seg) : ''}${b.origen === 'karve' ? ' · Bloque automático (importación de Karve)' : ''}`;
+  // F4-13 / F4-06: "auto" si lo puso la importación de Karve; punto latiendo si la O.T. tiene el cronómetro en marcha.
+  const marcas = `${b.origen === 'karve' ? '<span class="b-auto">auto</span>' : ''}${b.crono_tipo && FASES[b.crono_tipo] ? `<span class="crono-punto fase-${esc(b.crono_tipo)}" title="Cronómetro en marcha: ${esc(FASES[b.crono_tipo].nombre)}"></span>` : ''}`;
   el.innerHTML = compacto
-    ? `<span class="b-hora">${b.hora_inicio} · ${textoDuracion(b.duracion_min)}</span><b class="b-num">${esc(b.numero)}</b><span class="b-cliente">${esc(b.cliente_nombre)}</span>${b.cliente_zona ? `<small class="zona">${esc(b.cliente_zona)}</small>` : ''}`
-    : `<div class="b-hora">${b.hora_inicio}–${horaDe(fin)} · ${textoDuracion(b.duracion_min)}${b.prioridad === 1 ? ' · <span class="urgente-texto">Urgente</span>' : ''}</div>
+    ? `<span class="b-hora">${b.hora_inicio} · ${textoDuracion(b.duracion_min)}${marcas}</span><b class="b-num">${esc(b.numero)}</b><span class="b-cliente">${esc(b.cliente_nombre)}</span>${b.cliente_zona ? `<small class="zona">${esc(b.cliente_zona)}</small>` : ''}`
+    : `<div class="b-hora">${b.hora_inicio}–${horaDe(fin)} · ${textoDuracion(b.duracion_min)}${b.prioridad === 1 ? ' · <span class="urgente-texto">Urgente</span>' : ''}${marcas}</div>
        <div class="b-num">${esc(b.numero)}${b.estado !== 'planificada' ? ` <small>${esc(b.estado_nombre)}</small>` : ''}</div>
        <div class="b-cliente">${esc(b.cliente_nombre)}${b.cliente_zona ? ` <small class="zona">${esc(b.cliente_zona)}</small>` : ''}</div>
        ${b.maquina_id ? `<div class="b-maquina">${esc(textoMaquina(b))}</div>` : ''}
@@ -1211,44 +1222,418 @@ async function abrirBloque({ ot = null, bloque = null, tecnico_id = null, dia = 
 }
 
 // ---------------------------------------------------------------------------
-// Vista: Mis O.T. (tablet)
+// Técnico (F4-05 + F4-06): "Mi día" y ficha de trabajo con cronómetro y checklist. Pensado para móvil y tablet.
+//
+// - Mi día (#midia): su cronómetro en marcha (si lo tiene), el resumen de horas del día y sus tareas: en curso, las de hoy por
+//   hora y las atrasadas. Un botón por momento: Salir → He llegado → Empezar trabajo → Abrir ficha.
+// - Ficha de trabajo (#trabajo/ID): a pantalla completa, con el cronómetro fijo arriba (tres fases: desplazamiento, espera de
+//   acceso, trabajo), los datos del aviso, el checklist y, fijos abajo, Parar por hoy / Pausar / Terminar.
+// La hora es la del servidor: aquí solo se pinta lo transcurrido desde el último dato (`segundos` + reloj local).
 // ---------------------------------------------------------------------------
-async function pintarMisOT() {
-  $('[data-accion="recargar"]', app).onclick = pintarMisOT;
-  const lista = ref('lista', app);
-  lista.classList.add('cargando');
+const TEC_POLLING_MS = 15000;
+const FASES = {
+  desplazamiento: { nombre: 'Desplazamiento', icono: '🚗' },
+  espera: { nombre: 'Espera de acceso', icono: '⏳' },
+  trabajo: { nombre: 'Trabajo', icono: '🔧' },
+};
+const GRUPOS_TAREA = [['en_curso', 'En curso'], ['hoy', 'Hoy'], ['atrasada', 'Atrasadas o sin fecha']];
+const RESULTADOS_PUNTO = [['hecho', '✓ Hecho'], ['no_aplica', 'No aplica'], ['incidencia', '⚠ Incidencia']];
+
+const dosCifras = (n) => String(n).padStart(2, '0');
+function reloj(seg) {
+  seg = Math.max(0, Math.floor(seg));
+  return `${dosCifras(Math.floor(seg / 3600))}:${dosCifras(Math.floor((seg % 3600) / 60))}:${dosCifras(seg % 60)}`;
+}
+function duracionSeg(seg) {
+  const min = Math.floor(Math.max(0, seg) / 60);
+  const h = Math.floor(min / 60);
+  return h ? `${h} h${min % 60 ? ` ${min % 60} min` : ''}` : `${min} min`;
+}
+const horaCorta = (fechaHora) => String(fechaHora || '').slice(11, 16);
+
+// Contadores que avanzan solos: el elemento guarda los segundos que llevaba al recibir el dato y cuándo se recibió.
+function ponerTic(el, base, formato) {
+  el.dataset.tic = formato;
+  el.dataset.base = String(base || 0);
+  el.dataset.t0 = String(Date.now());
+  pintarTic(el);
+}
+function quitarTic(el, texto) {
+  delete el.dataset.tic;
+  el.textContent = texto;
+}
+function pintarTic(el) {
+  const s = Number(el.dataset.base) + (Date.now() - Number(el.dataset.t0)) / 1000;
+  el.textContent = el.dataset.tic === 'reloj' ? reloj(s) : duracionSeg(s);
+}
+function pararTecnico() {
+  if (S.tec.timer) clearInterval(S.tec.timer);
+  if (S.tec.tic) clearInterval(S.tec.tic);
+  S.tec.timer = S.tec.tic = null;
+  document.body.classList.remove('modo-ficha');
+}
+function arrancarTecnico(recargar) {
+  S.tec.timer = setInterval(() => { if (!document.hidden && !$('#modales .modal-fondo')) recargar(); }, TEC_POLLING_MS);
+  S.tec.tic = setInterval(() => { for (const el of $$('[data-tic]', app)) pintarTic(el); }, 1000);
+}
+
+// Pide una nota en un modal (opcional u obligatoria). Devuelve el texto ('' si se deja vacía) o null si se cancela.
+function pedirNota({ titulo, pista = '', etiqueta = 'Nota', obligatoria = false, boton = 'Guardar' }) {
+  return new Promise((resolver) => {
+    const nodo = tpl('tpl-nota');
+    ref('titulo', nodo).textContent = titulo;
+    ref('pista', nodo).textContent = pista;
+    ref('etiqueta', nodo).textContent = etiqueta;
+    const nota = ref('nota', nodo);
+    const confirmar = ref('confirmar', nodo);
+    confirmar.textContent = boton;
+    let hecho = false;
+    confirmar.onclick = () => {
+      const texto = nota.value.trim();
+      if (obligatoria && !texto) { aviso(ref('avisos', nodo), 'Escribe la nota', 'error'); nota.focus(); return; }
+      hecho = true;
+      cerrarModal(nodo);
+      resolver(texto);
+    };
+    abrirModal(nodo);
+    const obs = new MutationObserver(() => { if (!nodo.isConnected) { obs.disconnect(); if (!hecho) resolver(null); } });
+    obs.observe(document.getElementById('modales'), { childList: true });
+  });
+}
+
+// Empieza o cambia de fase, o para por hoy. Si tiene el cronómetro en otra O.T., pregunta antes de pararlo. Devuelve la respuesta o null.
+async function ficharCrono(otId, accion, nota) {
+  const enviar = (extra = {}) => api(`/api/ot/${otId}/crono`, { method: 'POST', body: { accion, nota: nota || undefined, ...extra } });
   try {
-    const datos = await api('/api/ot?abiertas=1&limite=200');
-    ref('contador', app).textContent = `${datos.total} asignadas`;
-    lista.innerHTML = '';
-    if (!datos.ots.length) lista.innerHTML = '<div class="vacio">No tienes ninguna O.T. asignada.</div>';
-    for (const o of datos.ots) lista.append(tarjetaGrande(o));
+    return await enviar();
   } catch (e) {
-    if (e.status !== 401) lista.innerHTML = `<div class="vacio">${esc(e.message)}</div>`;
-  } finally {
-    lista.classList.remove('cargando');
+    if (e.status === 409 && e.datos && e.datos.abierto) {
+      const a = e.datos.abierto;
+      const si = await elegir(`Tienes el cronómetro en marcha en la O.T. ${a.numero} (${String(a.nombre).toLowerCase()}). ¿Lo paras y empiezas en esta?`, [{ etiqueta: 'Sí, parar aquella y empezar aquí', valor: 1 }]);
+      if (!si) return null;
+      try { return await enviar({ cerrar_otra: true }); } catch (e2) { if (e2.status !== 401) toast(e2.message, 'error'); return null; }
+    }
+    if (e.status !== 401) toast(e.message, 'error');
+    return null;
   }
 }
 
-function tarjetaGrande(o) {
-  const el = document.createElement('div');
-  el.className = 'tarjeta-grande';
-  el.style.borderTopColor = (S.estadoPor[o.estado] || {}).color || '#6b7280';
-  const destinos = destinosDesde(o);
-  el.innerHTML = `
-    <div class="num"><span>${chipPrioridad(o.prioridad)}${esc(o.numero)}</span><span>${chipEstado(o)} ${chipEtiqueta(o)}</span></div>
-    <div class="cliente">${esc(o.cliente_nombre)}</div>
-    ${o.maquina_id ? `<div class="maquina">${esc(textoMaquina(o))}</div>` : ''}
-    ${o.sintoma ? `<div class="sintoma">${esc(o.sintoma)}</div>` : ''}
-    <div class="botones">
-      ${destinos.map((d) => `<button type="button" class="btn btn-grande" data-destino="${esc(d.codigo)}" style="border-color:${esc(d.color)}">${esc(d.nombre)}</button>`).join('')}
-      <button type="button" class="btn btn-grande ancho" data-accion="detalle">Ver detalle</button>
-    </div>`;
-  $('[data-accion="detalle"]', el).onclick = () => abrirDetalle(o.id);
-  for (const b of $$('[data-destino]', el)) {
-    b.onclick = () => abrirCambioEstado(o, b.dataset.destino, { alTerminar: pintarMisOT });
+// --- Mi día -------------------------------------------------------------------
+function pintarMiDia() {
+  pararTecnico();
+  S.tec.etag = null;
+  $('[data-accion="recargar"]', app).onclick = () => cargarMiDia(true);
+  cargarMiDia(true);
+  arrancarTecnico(() => cargarMiDia(false));
+}
+
+async function cargarMiDia(forzar) {
+  if (S.vista !== 'midia' || S.tec.cargando) return;
+  S.tec.cargando = true;
+  try {
+    const d = await api('/api/mi-dia', { headers: !forzar && S.tec.etag ? { 'If-None-Match': S.tec.etag } : {} });
+    if (d._304) return;
+    S.tec.etag = d._etag;
+    S.tec.datos = d;
+    if (S.vista === 'midia') renderMiDia();
+  } catch (e) {
+    if (e.status === 401 || S.vista !== 'midia') return;
+    const lista = ref('lista', app);
+    if (lista && !S.tec.datos) lista.innerHTML = `<div class="vacio">${esc(e.message)}</div>`;
+    else toast(`Mi día: ${e.message}`, 'error');
+  } finally {
+    S.tec.cargando = false;
   }
+}
+
+function renderMiDia() {
+  const d = S.tec.datos;
+  ref('fecha', app).textContent = diaLargo(d.dia);
+
+  // Cronómetro en marcha: siempre a la vista, lleva a la ficha de esa O.T.
+  const banner = ref('crono-banner', app);
+  if (d.crono) {
+    const f = FASES[d.crono.tipo] || { nombre: d.crono.tipo, icono: '⏱' };
+    banner.className = `crono-banner fase-${d.crono.tipo}${d.crono.otro_dia ? ' otro-dia' : ''}`;
+    banner.href = `#trabajo/${d.crono.ot_id}`;
+    banner.innerHTML = `<span class="cb-texto">${f.icono} <b>${esc(f.nombre)}</b> · O.T. ${esc(d.crono.numero)}${d.crono.otro_dia ? `<small>Abierto desde el ${esc(fecha(d.crono.inicio))}: ciérralo</small>` : ''}</span><b class="crono-tiempo" data-ref="banner-reloj"></b><span class="ir">Abrir ›</span>`;
+    ponerTic(ref('banner-reloj', banner), d.crono.segundos, 'reloj');
+  } else {
+    banner.className = 'crono-banner oculto';
+    banner.innerHTML = '';
+  }
+
+  // Resumen de horas del día: las tres fases y el total frente a la jornada.
+  const r = d.resumen;
+  const resumen = ref('resumen', app);
+  resumen.innerHTML = Object.entries(FASES).map(([tipo, f]) =>
+    `<div class="pill fase-${tipo}${d.crono && d.crono.tipo === tipo ? ' activa' : ''}"><span>${f.icono} ${esc(f.nombre)}</span><b data-total="${tipo}">${duracionSeg(r[tipo])}</b></div>`).join('')
+    + `<div class="pill total"><span>Fichado hoy</span><b data-total="total">${duracionSeg(r.total)}</b><small>de ${r.horas_dia} h${r.previsto_min ? ` · previsto ${textoDuracion(r.previsto_min)}` : ''}</small></div>`;
+  if (d.crono && !d.crono.otro_dia) {
+    ponerTic($(`[data-total="${d.crono.tipo}"]`, resumen), r[d.crono.tipo], 'dur');
+    ponerTic($('[data-total="total"]', resumen), r.total, 'dur');
+  }
+
+  // Tareas por grupo.
+  const lista = ref('lista', app);
+  lista.innerHTML = '';
+  for (const [grupo, titulo] of GRUPOS_TAREA) {
+    const tareas = d.tareas.filter((t) => t.grupo === grupo).sort((a, b) => (b.crono ? 1 : 0) - (a.crono ? 1 : 0));   // la del cronómetro en marcha, la primera
+    if (!tareas.length) continue;
+    const sec = document.createElement('section');
+    sec.className = 'grupo';
+    sec.dataset.grupo = grupo;
+    sec.innerHTML = `<h3>${esc(titulo)} <span class="chip chip-claro">${tareas.length}</span></h3><div class="tareas"></div>`;
+    for (const t of tareas) $('.tareas', sec).append(tarjetaTarea(t));
+    lista.append(sec);
+  }
+  if (!d.tareas.length) lista.innerHTML = '<div class="vacio">No tienes nada para hoy.</div>';
+
+  // Próximos días (solo consulta).
+  if (d.proximos.length) {
+    const det = document.createElement('details');
+    det.className = 'proximos';
+    const porDia = new Map();
+    for (const p of d.proximos) { if (!porDia.has(p.dia)) porDia.set(p.dia, []); porDia.get(p.dia).push(p); }
+    det.innerHTML = `<summary>Próximos días <span class="chip chip-claro">${d.proximos.length}</span></summary>`
+      + [...porDia.entries()].map(([dia, ps]) => `<div class="proximo-dia"><h4>${esc(diaLargo(dia).replace(/ de \d{4}$/, ''))}</h4>${ps.map((p) =>
+        `<div class="proximo"><b>${esc(p.hora_inicio)}</b><span>${esc(p.cliente_nombre)}${p.sintoma ? ` · <small>${esc(p.sintoma)}</small>` : ''}</span><small>${esc(textoDuracion(p.duracion_min))}</small></div>`).join('')}</div>`).join('');
+    lista.append(det);
+  }
+}
+
+// Botón principal de una tarea según el momento: Salir → He llegado → Empezar trabajo → (ficha).
+function siguientePaso(t) {
+  if (t.crono) {
+    if (t.crono.tipo === 'desplazamiento') return { fase: 'espera', texto: '📍 He llegado' };
+    if (t.crono.tipo === 'espera') return { fase: 'trabajo', texto: '🔧 Empezar trabajo' };
+    return { fase: null, texto: 'Abrir la ficha' };
+  }
+  if (t.estado === 'planificada') return { fase: 'desplazamiento', texto: '🚗 Salir hacia el cliente' };
+  return { fase: null, texto: '▶ Continuar' };
+}
+
+function tarjetaTarea(t) {
+  const el = document.createElement('article');
+  el.className = `tarea${t.prioridad === 1 ? ' urgente' : ''}${t.crono ? ` con-crono fase-${t.crono.tipo}` : ''}`;
+  el.dataset.id = t.id;
+  const hora = t.bloque
+    ? `${esc(t.bloque.hora_inicio)} <small>${esc(textoDuracion(t.bloque.duracion_min))}</small>`
+    : (t.grupo === 'atrasada' ? `<small>${t.bloque_anterior ? 'Era el ' + esc(fecha(t.bloque_anterior)) : 'Sin fecha'}</small>` : '<small>Sin hora hoy</small>');
+  const chips = [];
+  if (t.crono) chips.push(`<span class="dato-chip fase-${t.crono.tipo}">${FASES[t.crono.tipo].icono} ${esc(FASES[t.crono.tipo].nombre)} <b data-ref="crono"></b></span>`);
+  if (t.tiempo.total > 0) chips.push(`<span class="dato-chip">⏱ ${duracionSeg(t.tiempo.total)} fichados</span>`);
+  if (t.checklist.total) chips.push(`<span class="dato-chip${t.checklist.respondidos >= t.checklist.total ? ' completo' : ''}">☑ Checklist ${t.checklist.respondidos}/${t.checklist.total}</span>`);
+  if (t.tipo === 'preventivo') chips.push('<span class="dato-chip">Preventivo</span>');
+  const paso = siguientePaso(t);
+  el.innerHTML = `
+    <div class="tarea-cab"><span class="tarea-hora">${hora}</span>${t.prioridad === 1 ? '<span class="chip urgente-chip">Urgente</span>' : ''}<span class="tarea-num">${esc(t.numero)}</span></div>
+    <div class="tarea-cliente">${esc(t.cliente_nombre)}${t.cliente_zona ? ` <small class="zona">${esc(t.cliente_zona)}</small>` : ''}</div>
+    ${t.maquina_id ? `<div class="tarea-maquina">${esc(textoMaquina(t))}</div>` : ''}
+    ${t.sintoma ? `<div class="tarea-sintoma">${esc(t.sintoma)}</div>` : ''}
+    ${t.bloque && t.bloque.nota ? `<div class="tarea-nota">Nota de oficina: ${esc(t.bloque.nota)}</div>` : ''}
+    ${chips.length ? `<div class="tarea-pie">${chips.join('')}</div>` : ''}
+    <div class="tarea-botones">
+      <button type="button" class="btn btn-grande ${paso.fase ? `btn-fase fase-${paso.fase}` : 'btn-primario'}" data-accion="principal">${esc(paso.texto)}</button>
+      ${paso.fase ? '<button type="button" class="btn btn-grande" data-accion="ficha">Ficha</button>' : ''}
+    </div>`;
+  if (t.crono) ponerTic(ref('crono', el), t.crono.segundos, 'reloj');
+  const abrir = () => { location.hash = `trabajo/${t.id}`; };
+  el.onclick = (e) => { if (!e.target.closest('button')) abrir(); };
+  const ficha = $('[data-accion="ficha"]', el);
+  if (ficha) ficha.onclick = abrir;
+  const principal = $('[data-accion="principal"]', el);
+  principal.onclick = async () => {
+    if (!paso.fase) { abrir(); return; }
+    principal.disabled = true;
+    const r = await ficharCrono(t.id, paso.fase);
+    principal.disabled = false;
+    if (r) { toast(`${t.numero}: ${FASES[paso.fase].nombre.toLowerCase()}`, 'ok'); await cargarMiDia(true); }
+  };
   return el;
+}
+
+// --- Ficha de trabajo ---------------------------------------------------------
+function mostrarTrabajo(id) {
+  if (S.sesion.alcance !== 'asignadas') { location.hash = `ot/${id}`; return; }   // la oficina usa el detalle de siempre
+  pararPolling();
+  pararPollingPlan();
+  pararTecnico();
+  S.vista = 'trabajo';
+  S.tec.otId = id;
+  S.tec.ot = null;
+  for (const b of $$('#nav button[data-vista]')) b.classList.toggle('activo', b.dataset.vista === 'midia');
+  app.innerHTML = '';
+  app.append(document.getElementById('tpl-trabajo').content.cloneNode(true));
+  app.classList.remove('entra');   // sin animación de entrada: su transform descolocaría la barra fija de acciones mientras dura
+  document.body.classList.add('modo-ficha');
+  window.scrollTo(0, 0);
+  $('[data-accion="volver"]', app).onclick = () => { location.hash = 'midia'; };
+  cargarTrabajo();
+  arrancarTecnico(cargarTrabajo);
+}
+
+async function cargarTrabajo() {
+  const id = S.tec.otId;
+  try {
+    const [ot, dia] = await Promise.all([api(`/api/ot/${id}`), api('/api/mi-dia').catch(() => null)]);
+    if (S.vista !== 'trabajo' || S.tec.otId !== id) return;
+    S.tec.ot = ot;
+    if (dia && !dia._304) { S.tec.datos = dia; S.tec.etag = dia._etag; }
+    renderTrabajo();
+  } catch (e) {
+    if (e.status === 401 || S.vista !== 'trabajo') return;
+    if (e.status === 404) { toast('Esa O.T. ya no está entre las tuyas', 'aviso'); location.hash = 'midia'; return; }
+    toast(e.message, 'error');
+  }
+}
+
+function renderTrabajo() {
+  const ot = S.tec.ot;
+  const yo = S.sesion.usuario.id;
+  const ficha = ref('ficha', app);
+  if (!ficha) return;
+  const abierto = ot.tiempos.find((t) => !t.fin && t.tecnico_id === yo) || null;
+  const activa = !ot.es_final && ['planificada', 'en_curso'].includes(ot.estado);
+  const hoyIso = S.tec.datos ? S.tec.datos.hoy : null;
+
+  ref('numero', ficha).textContent = ot.numero;
+  ref('chips', ficha).innerHTML = `${chipEstado(ot)} ${chipEtiqueta(ot)}${ot.prioridad === 1 ? ' <span class="chip urgente-chip">Urgente</span>' : ''}`;
+
+  // Cronómetro: fase en marcha y reloj; cada fase con su total. La fase activa va rellena.
+  const crono = ref('crono', ficha);
+  crono.className = `crono${abierto ? ` fase-${abierto.tipo} en-marcha` : ''}`;
+  const etiquetaFase = ref('fase', ficha);
+  const relojEl = ref('reloj', ficha);
+  if (abierto) {
+    etiquetaFase.textContent = `${FASES[abierto.tipo].icono} ${FASES[abierto.tipo].nombre} · desde las ${horaCorta(abierto.inicio)}${abierto.inicio.slice(0, 10) !== hoyIso && hoyIso ? ` del ${fecha(abierto.inicio.slice(0, 10))}` : ''}`;
+    ponerTic(relojEl, abierto.segundos, 'reloj');
+  } else {
+    etiquetaFase.textContent = ot.tiempo.total ? 'Cronómetro parado · total fichado' : 'Sin empezar';
+    quitarTic(relojEl, reloj(ot.tiempo.total));
+  }
+  for (const b of $$('[data-fase]', ficha)) {
+    const tipo = b.dataset.fase;
+    const total = $('[data-total]', b);
+    if (abierto && abierto.tipo === tipo) ponerTic(total, ot.tiempo[tipo], 'dur'); else quitarTic(total, duracionSeg(ot.tiempo[tipo]));
+    b.classList.toggle('activa', !!abierto && abierto.tipo === tipo);
+    b.setAttribute('aria-pressed', abierto && abierto.tipo === tipo ? 'true' : 'false');
+    b.disabled = !activa;
+    b.onclick = async () => {
+      if (abierto && abierto.tipo === tipo) return;
+      for (const x of $$('[data-fase]', ficha)) x.disabled = true;
+      const r = await ficharCrono(ot.id, tipo);
+      if (r) { S.tec.ot = r.ot; if (S.tec.datos) S.tec.datos.crono = r.crono; }
+      if (S.vista === 'trabajo') renderTrabajo();
+    };
+  }
+  ref('pista', ficha).textContent = !activa ? ''
+    : !abierto ? (ot.estado === 'planificada' ? 'Pulsa Desplazamiento al salir hacia el cliente (o Trabajo si ya estás con la máquina).' : 'Cronómetro parado. Pulsa la fase que toque para seguir.')
+      : abierto.tipo === 'desplazamiento' ? 'Al llegar: Espera de acceso si aún no puedes entrar, o Trabajo si empiezas ya.'
+        : abierto.tipo === 'espera' ? 'Cuando puedas ponerte con la máquina, pulsa Trabajo.'
+          : 'Al acabar, Terminar. Si te vas sin acabar: Parar por hoy o Pausar.';
+
+  // Avisos: cronómetro en otra O.T. o la O.T. ya no admite fichaje.
+  const avisos = ref('avisos', ficha);
+  const otro = S.tec.datos && S.tec.datos.crono && S.tec.datos.crono.ot_id !== ot.id ? S.tec.datos.crono : null;
+  if (!activa) aviso(avisos, `Esta O.T. está en "${ot.estado_nombre}": ya no se ficha en ella.`, 'info');
+  else if (otro) aviso(avisos, `Tienes el cronómetro en marcha en la O.T. ${otro.numero} (${String(otro.nombre).toLowerCase()}).`, 'conflicto', 'Ir a esa O.T.', () => { location.hash = `trabajo/${otro.ot_id}`; });
+  else avisos.innerHTML = '';
+
+  // Cliente y máquina.
+  const fila = (etiqueta, html) => (html ? `<div><span class="et">${esc(etiqueta)}</span><span>${html}</span></div>` : '');
+  const telefono = (n) => (n ? `<a href="tel:${esc(String(n).replace(/[^\d+]/g, ''))}">${esc(n)}</a>` : '');
+  const miBloque = (ot.bloques || []).filter((b) => b.tecnico_id === yo && (!hoyIso || b.dia >= hoyIso))[0];
+  ref('datos', ficha).innerHTML = [
+    fila('Cliente', `<b>${esc(ot.cliente_nombre)}</b>${ot.cliente_zona ? ` <small class="zona">${esc(ot.cliente_zona)}</small>` : ''}`),
+    fila('Dirección', ot.cliente_direccion ? `<a href="https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(ot.cliente_direccion)}" target="_blank" rel="noopener">${esc(ot.cliente_direccion)}</a>` : ''),
+    fila('Contacto', [ot.contacto_nombre ? esc(ot.contacto_nombre) : '', telefono(ot.contacto_telefono)].filter(Boolean).join(' · ')),
+    fila('Teléfono', telefono(ot.cliente_telefono)),
+    fila('Máquina', ot.maquina_id ? `${esc(textoMaquina(ot))}${ot.maquina_bastidor && ot.maquina_flota ? `<br><small>Bastidor ${esc(ot.maquina_bastidor)}</small>` : ''}` : ''),
+    fila('Previsto', miBloque ? `${esc(fecha(miBloque.dia))} a las ${esc(miBloque.hora_inicio)} · ${esc(textoDuracion(miBloque.duracion_min))}${miBloque.nota ? `<br><small>Nota de oficina: ${esc(miBloque.nota)}</small>` : ''}` : ''),
+    fila('Tipo', esc(ot.tipo === 'preventivo' ? 'Mantenimiento preventivo' : 'Correctivo')),
+  ].join('');
+
+  // Aviso del cliente.
+  const secAviso = ref('sec-aviso', ficha);
+  secAviso.classList.toggle('oculto', !ot.sintoma && !ot.descripcion);
+  ref('aviso', ficha).innerHTML = `${ot.sintoma ? `<div class="sintoma">${esc(ot.sintoma)}</div>` : ''}${ot.descripcion && ot.descripcion !== ot.sintoma ? `<div class="descripcion">${esc(ot.descripcion)}</div>` : ''}`;
+
+  // Checklist.
+  const puntos = ot.checklist || [];
+  ref('sec-checklist', ficha).classList.toggle('oculto', !puntos.length);
+  const req = ot.requisitos;
+  const progreso = ref('progreso', ficha);
+  progreso.textContent = `${req.checklist.respondidos} de ${req.checklist.total}`;
+  progreso.className = `chip ${req.checklist.completo ? 'chip-ok' : 'chip-claro'}`;
+  const lista = ref('checklist', ficha);
+  lista.innerHTML = '';
+  const editable = !ot.es_final && puede('ot.checklist');
+  for (const p of puntos) {
+    const el = document.createElement('div');
+    el.className = 'punto';
+    el.dataset.punto = p.id;
+    el.dataset.resultado = p.resultado || '';
+    el.innerHTML = `
+      <div class="punto-texto">${esc(p.texto)}</div>
+      <div class="punto-botones">${RESULTADOS_PUNTO.map(([res, texto]) => `<button type="button" class="btn${p.resultado === res ? ' elegido' : ''}" data-res="${res}" aria-pressed="${p.resultado === res}"${editable ? '' : ' disabled'}>${texto}</button>`).join('')}</div>
+      ${p.nota ? `<div class="punto-nota">${esc(p.nota)}</div>` : ''}
+      ${p.resultado && p.usuario_nombre ? `<div class="punto-meta">${esc(p.usuario_nombre)} · ${esc(fecha(p.fecha))}</div>` : ''}`;
+    for (const b of $$('[data-res]', el)) {
+      b.onclick = async () => {
+        let resultado = b.dataset.res;
+        let nota;
+        if (p.resultado === resultado) resultado = null;                    // pulsar el elegido lo deja sin responder
+        else if (resultado === 'incidencia') {
+          nota = await pedirNota({ titulo: p.texto, pista: 'Di qué has encontrado. Quedará en la O.T.', etiqueta: '¿Qué pasa?', obligatoria: true, boton: 'Guardar incidencia' });
+          if (nota === null) return;
+        }
+        for (const x of $$('[data-res]', el)) x.disabled = true;
+        try {
+          const r = await api(`/api/ot/${ot.id}/checklist/${p.id}`, { method: 'PUT', body: { resultado, nota } });
+          S.tec.ot.checklist = r.checklist;
+          S.tec.ot.requisitos = r.requisitos;
+        } catch (e) {
+          if (e.status !== 401) toast(e.message, 'error');
+        }
+        if (S.vista === 'trabajo') renderTrabajo();
+      };
+    }
+    lista.append(el);
+  }
+
+  // Tiempos fichados (tramos).
+  const tramos = ref('tramos', ficha);
+  ref('n-tramos', ficha).textContent = ot.tiempos.length ? `${ot.tiempos.length}` : '';
+  tramos.innerHTML = ot.tiempos.length
+    ? ot.tiempos.map((t) => `<li class="fase-${esc(t.tipo)}"><span class="punto-fase"></span><span>${esc(fecha(t.inicio.slice(0, 10)).slice(0, 5))} ${horaCorta(t.inicio)}–${t.fin ? horaCorta(t.fin) : 'ahora'}</span><span>${esc((FASES[t.tipo] || {}).nombre || t.tipo)}${t.tecnico_id !== yo ? ` · ${esc(t.tecnico_nombre)}` : ''}${t.nota ? ` · <small>${esc(t.nota)}</small>` : ''}</span><b>${t.fin ? duracionSeg(t.segundos) : 'en marcha'}</b></li>`).join('')
+    : '<li class="suave">Todavía no has fichado nada en esta O.T.</li>';
+
+  // Acciones fijas: Parar por hoy (necesita el cronómetro en marcha), Pausar y Terminar (bloqueado si falta algo).
+  const parar = $('[data-accion="parar"]', ficha);
+  const pausar = $('[data-accion="pausar"]', ficha);
+  const terminar = $('[data-accion="terminar"]', ficha);
+  parar.disabled = !abierto;
+  pausar.disabled = !activa;
+  terminar.disabled = !activa || !req.completo;
+  const falta = ref('falta', ficha);
+  const textos = { trabajo: 'fichar tiempo de Trabajo', checklist: `responder el checklist (${req.checklist.respondidos} de ${req.checklist.total})` };
+  falta.classList.toggle('oculto', !activa || !!req.completo);
+  falta.textContent = req.completo ? '' : `Para terminar falta: ${req.faltan.map((f) => textos[f.codigo] || f.texto).join(' y ')}.`;
+  parar.onclick = async () => {
+    const nota = await pedirNota({ titulo: 'Parar por hoy', pista: 'Se para el cronómetro y la O.T. sigue en tu tablero para continuar otro día. Si lo que pasa es que falta un repuesto o el cliente, usa Pausar.', etiqueta: 'Nota (opcional)', boton: 'Parar por hoy' });
+    if (nota === null) return;
+    const r = await ficharCrono(ot.id, 'parar', nota);
+    if (r) { toast(`${ot.numero}: parada por hoy. Sigue en tu tablero.`, 'ok'); location.hash = 'midia'; }
+  };
+  pausar.onclick = async () => {
+    if (await abrirCambioEstado(S.tec.ot, 'pausada')) location.hash = 'midia';
+    else if (S.vista === 'trabajo') cargarTrabajo();
+  };
+  terminar.onclick = async () => {
+    if (await abrirCambioEstado(S.tec.ot, 'finalizada')) location.hash = 'midia';
+    else if (S.vista === 'trabajo') cargarTrabajo();
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -1324,7 +1709,7 @@ function pintarPaginacion(contenedor, datos, irA) {
 function refrescarVista() {
   if (S.vista === 'kanban') { S.kanban.etag = null; cargarKanban(); }
   else if (S.vista === 'planificador') recargarPlan(true);
-  else if (S.vista === 'misot') pintarMisOT();
+  else if (S.vista === 'midia') cargarMiDia(true);
   else if (S.vista === 'listado') cargarListado();
   else if (S.vista === 'clientes') cargarClientes();
   else if (S.vista === 'maquinas') cargarMaquinas();
@@ -1918,6 +2303,15 @@ function pintarDetalle(nodo, ot) {
   const enKarve = [ot.karve_estado ? `estado ${ot.karve_estado}` : null, ot.fecha_prevista ? `prevista ${fecha(ot.fecha_prevista)}` : null].filter(Boolean);
   ref('fila-karve', nodo).classList.toggle('oculto', !enKarve.length);
   ref('karve', nodo).textContent = enKarve.join(' · ');
+  // F4-06 / F4-05: tiempos fichados por fase frente a lo previsto, y el checklist con sus incidencias.
+  const tm = ot.tiempo || {};
+  ref('fila-tiempos', nodo).classList.toggle('oculto', !tm.total && !tm.en_marcha);
+  ref('tiempos', nodo).textContent = Object.entries(FASES).map(([tipo, f]) => `${f.icono} ${f.nombre} ${duracionSeg(tm[tipo] || 0)}`).join(' · ')
+    + (tm.previsto_min ? ` · previsto ${textoDuracion(tm.previsto_min)}` : '') + (tm.en_marcha ? ' · cronómetro en marcha' : '');
+  const ck = ot.checklist || [];
+  ref('fila-checklist', nodo).classList.toggle('oculto', !ck.length);
+  ref('checklist', nodo).textContent = `${ck.filter((p) => p.resultado).length} de ${ck.length} respondidos`
+    + ck.filter((p) => p.resultado === 'incidencia').map((p) => ` · ⚠ ${p.texto}: ${p.nota || ''}`).join('');
 
   // Datos editables (PUT con version → 409 si otro la cambió).
   const form = ref('form-datos', nodo);

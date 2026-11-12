@@ -79,13 +79,60 @@
   </div>
 </template>
 
-<template id="tpl-misot">
-  <div class="barra-vista misot-barra">
-    <h2>Mis O.T.</h2>
-    <span class="contador" data-ref="contador"></span>
-    <button class="btn btn-grande" data-accion="recargar">Actualizar</button>
+<template id="tpl-midia">
+  <div class="barra-vista midia-barra">
+    <h2>Mi día</h2>
+    <span class="contador" data-ref="fecha"></span>
+    <button class="btn" data-accion="recargar">Actualizar</button>
   </div>
-  <div class="misot" data-ref="lista"></div>
+  <a class="crono-banner oculto" data-ref="crono-banner" href="#midia"></a>
+  <div class="midia-resumen" data-ref="resumen"></div>
+  <div class="midia" data-ref="lista"><div class="vacio">Cargando…</div></div>
+</template>
+
+<template id="tpl-trabajo">
+  <div class="ficha" data-ref="ficha">
+    <div class="ficha-cabecera">
+      <button class="btn ficha-volver" type="button" data-accion="volver">‹ Mi día</button>
+      <div class="ficha-titulo"><b data-ref="numero"></b><span data-ref="chips"></span></div>
+    </div>
+    <div class="crono" data-ref="crono">
+      <div class="crono-reloj"><span class="crono-fase" data-ref="fase">Cargando…</span><b class="crono-tiempo" data-ref="reloj">00:00:00</b></div>
+      <div class="crono-fases" role="group" aria-label="Fase del cronómetro">
+        <button type="button" class="fase fase-desplazamiento" data-fase="desplazamiento" disabled><span class="fase-icono">🚗</span><span class="fase-nombre">Desplazamiento</span><span class="fase-total" data-total="desplazamiento">0 min</span></button>
+        <button type="button" class="fase fase-espera" data-fase="espera" disabled><span class="fase-icono">⏳</span><span class="fase-nombre">Espera de acceso</span><span class="fase-total" data-total="espera">0 min</span></button>
+        <button type="button" class="fase fase-trabajo" data-fase="trabajo" disabled><span class="fase-icono">🔧</span><span class="fase-nombre">Trabajo</span><span class="fase-total" data-total="trabajo">0 min</span></button>
+      </div>
+    </div>
+    <div class="crono-pista" data-ref="pista"></div>
+    <div data-ref="avisos"></div>
+    <section class="ficha-seccion">
+      <h3>Cliente y máquina</h3>
+      <div class="ficha-datos" data-ref="datos"></div>
+    </section>
+    <section class="ficha-seccion" data-ref="sec-aviso">
+      <h3>Aviso</h3>
+      <div class="ficha-aviso" data-ref="aviso"></div>
+    </section>
+    <section class="ficha-seccion oculto" data-ref="sec-checklist">
+      <h3>Checklist <span class="chip chip-claro" data-ref="progreso"></span></h3>
+      <div class="checklist" data-ref="checklist"></div>
+    </section>
+    <section class="ficha-seccion">
+      <details>
+        <summary>Tiempos fichados <span class="chip chip-claro" data-ref="n-tramos"></span></summary>
+        <ul class="tramos" data-ref="tramos"></ul>
+      </details>
+    </section>
+    <div class="ficha-acciones">
+      <div class="ficha-falta oculto" data-ref="falta"></div>
+      <div class="ficha-botones">
+        <button type="button" class="btn accion-parar" data-accion="parar" disabled><b>Parar por hoy</b><small>Sigue en tu tablero</small></button>
+        <button type="button" class="btn accion-pausar" data-accion="pausar" disabled><b>Pausar</b><small>Falta algo: sale de tu tablero</small></button>
+        <button type="button" class="btn accion-terminar" data-accion="terminar" disabled><b>Terminar</b><small>Trabajo hecho</small></button>
+      </div>
+    </div>
+  </div>
 </template>
 
 <template id="tpl-listado">
@@ -184,6 +231,8 @@
             <div><span>Técnico asignado</span><span data-ref="tecnico"></span></div>
             <div><span>Abierta</span><span data-ref="creado"></span></div>
             <div><span>Planificación</span><span data-ref="bloques"></span></div>
+            <div data-ref="fila-tiempos" class="oculto"><span>Tiempos fichados</span><span data-ref="tiempos"></span></div>
+            <div data-ref="fila-checklist" class="oculto"><span>Checklist</span><span data-ref="checklist"></span></div>
             <div data-ref="fila-karve" class="oculto"><span>En Karve</span><span data-ref="karve"></span></div>
           </div>
         </section>
@@ -493,6 +542,29 @@
         <div class="pregunta">
           <label data-ref="etiqueta-2"></label>
           <textarea data-ref="nota" class="amplio dictado" maxlength="1000" placeholder="Dicta o escribe."></textarea>
+        </div>
+        <div class="acciones">
+          <button class="btn btn-primario btn-grande" type="button" data-ref="confirmar"></button>
+          <button class="btn btn-grande" type="button" data-accion="cerrar">Cancelar</button>
+        </div>
+      </div>
+    </div>
+  </div>
+</template>
+
+<template id="tpl-nota">
+  <div class="modal-fondo tablet">
+    <div class="modal estrecho">
+      <div class="modal-cabecera">
+        <h2 data-ref="titulo"></h2>
+        <button class="cerrar" type="button" data-accion="cerrar" aria-label="Cerrar">×</button>
+      </div>
+      <div class="modal-cuerpo">
+        <div class="pista" data-ref="pista"></div>
+        <div data-ref="avisos"></div>
+        <div class="pregunta">
+          <label data-ref="etiqueta"></label>
+          <textarea data-ref="nota" class="amplio dictado" maxlength="500" placeholder="Dicta o escribe."></textarea>
         </div>
         <div class="acciones">
           <button class="btn btn-primario btn-grande" type="button" data-ref="confirmar"></button>

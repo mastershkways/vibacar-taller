@@ -98,7 +98,7 @@ const color = (p, sel, prop) => evaluar(p, `getComputedStyle(document.querySelec
 
   await salir(p);
   await entrar(p, 'tecnico1', 'prueba123');
-  await esperarHasta(p, `document.querySelectorAll('.tarjeta-grande').length > 0`);
+  await esperarHasta(p, `document.querySelectorAll('.tarea').length > 0`);
   await p.enviar('Emulation.setDeviceMetricsOverride', { width: 1024, height: 768, deviceScaleFactor: 1, mobile: true });
   await dormir(300);
   await captura(p, '06-tablet-misot');

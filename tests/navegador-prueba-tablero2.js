@@ -1,5 +1,5 @@
 // Prueba del Tablero v2 (F4-04) en Brave headless vía CDP: cinco verticales sin cerradas, etiquetas y urgentes en las tarjetas,
-// filtros, "tu vertical" por rol, modal de dos preguntas desde el detalle, Mis O.T. del técnico con sus tres destinos.
+// filtros, "tu vertical" por rol, modal de dos preguntas desde el detalle, y el técnico (Mi día → ficha → Pausar con el mismo modal).
 // Servidor en 5055 con la BD del seed (ciclo tablero2, después de cliente-prueba-tablero2.js).
 const fs = require('fs');
 const path = require('path');
@@ -132,13 +132,15 @@ const setSelect = (p, selector, valor) => evaluar(p, `(() => { const s = documen
   ok('recambista: "tu vertical" solo en Pausada; todas las tarjetas arrastrables (puede cambiar estado)', cols.filter((c) => c.mia).map((c) => c.fase).join(',') === 'pausada' && arrastrables[0] === arrastrables[1] && arrastrables[1] > 0, `mias=${cols.filter((c) => c.mia).map((c) => c.fase).join(',')} arrastrables=${arrastrables.join('/')}`);
   await captura(p, '04-recambista-tablero');
 
-  // --- Técnico: Mis O.T. con tres destinos y el modal en modo tablet --------------------------------------------
+  // --- Técnico: Mi día → ficha de trabajo (F4-05); Pausar abre el modal de dos preguntas en modo tablet ----------
   await salir(p);
   await entrar(p, 'tecnico1', 'prueba123');
-  await esperarHasta(p, `document.querySelectorAll('.tarjeta-grande').length > 0`);
-  const botonesT = await evaluar(p, `[...document.querySelectorAll('.tarjeta-grande')].map(t => [...t.querySelectorAll('[data-destino]')].map(b => b.dataset.destino).join(','))`);
-  ok('técnico: cada tarjeta ofrece como mucho En curso / Pausada / Finalizada y nunca Cerrada', botonesT.length >= 3 && botonesT.every((b) => b.split(',').every((d) => ['en_curso', 'pausada', 'finalizada'].includes(d)) && !b.includes('cerrada')), botonesT.join(' | '));
-  await evaluar(p, `[...document.querySelectorAll('.tarjeta-grande [data-destino=pausada]')][0].click()`);
+  await esperarHasta(p, `document.querySelectorAll('.tarea').length > 0`);
+  await evaluar(p, `document.querySelector('.tarea [data-accion=principal]').click()`);   // su O.T. en curso: "Continuar" abre la ficha
+  await esperarHasta(p, `document.body.classList.contains('modo-ficha') && !document.querySelector('.fase:disabled')`);
+  const accionesT = await evaluar(p, `[...document.querySelectorAll('.ficha-botones [data-accion]')].map(b => b.dataset.accion).join(',')`);
+  ok('técnico: la ficha de trabajo ofrece Parar por hoy / Pausar / Terminar (nunca cerrar)', accionesT === 'parar,pausar,terminar', accionesT);
+  await evaluar(p, `document.querySelector('.ficha-botones [data-accion=pausar]').click()`);
   ok('técnico: modal de dos preguntas en modo tablet (botones grandes)', await esperarHasta(p, `!!document.querySelector('#modales .modal-fondo.tablet [data-ref=opcion]')`));
   await captura(p, '05-tecnico-modal');
   await escape(p);

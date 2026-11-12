@@ -192,13 +192,13 @@ function quitarBloque(otId, bloque, usuario) {
 // ---------------------------------------------------------------------------
 
 // Hueco para un bloque nuevo de un técnico en un día: detrás del último que tenga (desde las 08:00), sin pasar de medianoche.
-// Devuelve también los minutos ya ocupados ese día, para repartir por capacidad.
+// Devuelve también los minutos ya ocupados ese día (para repartir por capacidad) y las zonas de sus clientes (para agrupar por zona).
 function huecoPara(tecnicoId, dia, duracion = DURACION_DEFECTO) {
   const bloques = stmt.bloquesDia.all(tecnicoId, dia);
   const ocupado = bloques.reduce((n, b) => n + b.duracion_min, 0);
   let inicio = bloques.reduce((fin, b) => Math.max(fin, minutos(b.hora_inicio) + b.duracion_min), PRIMER_HUECO);
   inicio = Math.min(Math.ceil(inicio / 15) * 15, 24 * 60 - duracion);
-  return { hora_inicio: horaDe(inicio), ocupado_min: ocupado };
+  return { hora_inicio: horaDe(inicio), ocupado_min: ocupado, zonas: [...new Set(bloques.map((b) => b.cliente_zona).filter(Boolean))] };
 }
 
 // Crea un bloque automático: no sube la versión de la O.T. ni cambia su estado ni su técnico (ya vienen de Karve); deja línea

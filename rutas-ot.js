@@ -36,6 +36,7 @@ const DIAS_CERRADAS_MAX = 90;
 const SELECT_OT = `
   SELECT o.*,
          c.nombre AS cliente_nombre, c.exige_pedido, c.zona AS cliente_zona,
+         c.direccion AS cliente_direccion, c.telefono AS cliente_telefono, c.tecnico_nombre AS contacto_nombre, c.tecnico_telefono AS contacto_telefono,
          m.marca AS maquina_marca, m.modelo AS maquina_modelo, m.bastidor AS maquina_bastidor, m.num_flota AS maquina_flota,
          e.nombre AS estado_nombre, e.fase, e.color AS estado_color, e.es_final,
          f.nombre AS fase_nombre, f.orden AS fase_orden, f.abierta AS fase_abierta,

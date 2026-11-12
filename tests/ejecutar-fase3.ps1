@@ -1,13 +1,14 @@
 # Lanza las pruebas de las Fases 3 a 4 sin tocar la base real: base temporal + seed + servidor en 5055 por ciclo,
 # navegador headless (Brave/Chrome/Edge) para las de interfaz y las pruebas de migración (roles y Tablero v2).
 # Uso: powershell -ExecutionPolicy Bypass -File tests\ejecutar-fase3.ps1 [-SinNavegador] [-Solo tecnico,planificador] [-Brave "C:\ruta\brave.exe"]
-#   -Solo: lista de ciclos a lanzar (clientes2, maquinas2, tablero2, tablero2nav, planificador, planificadornav, tecnico, karve, migraciones); sin él, todos.
+#   -Solo: lista de ciclos a lanzar (clientes2, maquinas2, tablero2, tablero2nav, planificador, planificadornav, tecnico, tecniconav, karve, migraciones); sin él, todos.
 param(
   [string]$Brave = "C:\Program Files\BraveSoftware\Brave-Browser\Application\brave.exe",
   [switch]$SinNavegador,
   [string[]]$Solo = @()
 )
 $ErrorActionPreference = 'Continue'
+$Solo = @($Solo | ForEach-Object { $_ -split ',' } | ForEach-Object { $_.Trim() } | Where-Object { $_ })   # con -File, "a,b" llega como un solo texto
 $raiz = Split-Path $PSScriptRoot -Parent
 $tmp = Join-Path $env:TEMP 'vibacar-taller-pruebas'
 New-Item -ItemType Directory -Force -Path $tmp | Out-Null
@@ -84,6 +85,7 @@ Ciclo 'tablero2nav' @('navegador-prueba-tablero2.js')   # base aparte: el arnés
 Ciclo 'planificador' @('cliente-prueba-planificador.js')
 Ciclo 'planificadornav' @('navegador-prueba-planificador.js')
 Ciclo 'tecnico' @('cliente-prueba-tecnico.js')
+Ciclo 'tecniconav' @('navegador-prueba-tecnico.js')
 
 if (-not (Quiere 'karve')) { }
 elseif (Select-String -Path (Join-Path $raiz '.env') -Pattern '^KARVE_COPIA_CONNECTION_STRING=' -Quiet -ErrorAction SilentlyContinue) {

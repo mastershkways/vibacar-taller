@@ -28,7 +28,7 @@ function ot({ tecnico = tA, prevista = '2025-06-01', estado = 'planificada', pri
 }
 const bloquesDe = (id) => db.prepare('SELECT * FROM ot_bloques WHERE ot_id = ? ORDER BY dia, hora_inicio').all(id);
 const delTecnico = (t, dia) => db.prepare('SELECT hora_inicio FROM ot_bloques WHERE tecnico_id = ? AND dia = ? ORDER BY hora_inicio').all(t, dia).map((b) => b.hora_inicio).join(',');
-const contador = () => ({ en_fecha: 0, repartidas: 0, quitados: 0, sin_hueco: 0, sin_repartir: 0, sin_tecnico: 0 });
+const contador = () => ({ en_fecha: 0, repartidas: 0, quitados: 0, sin_hueco: 0, sin_repartir: 0, sin_tecnico: 0, zonas_mezcladas: 0 });
 const lanzar = (opciones = {}) => db.transaction(() => planificarAutomaticas(contador(), { hoy: HOY, ...opciones }))();
 
 ok('los 4 laborables siguientes a un miércoles saltan el fin de semana', [D1, D2, D3, D4].join() === '2026-03-05,2026-03-06,2026-03-09,2026-03-10', [D1, D2, D3, D4].join());
@@ -107,6 +107,34 @@ ok('…y las que no caben siguen sin bloque (bandeja)', muchas.filter((id) => bl
 db.prepare("INSERT INTO ot_bloques (ot_id, tecnico_id, dia, hora_inicio, duracion_min) VALUES (?, ?, '2026-04-20', '22:00', 120)").run(manual, tB);
 ok('hueco con el día ocupado hasta medianoche: no pasa de las 22:00', plan.huecoPara(tB, '2026-04-20').hora_inicio === '22:00' && plan.huecoPara(tB, '2026-04-20').ocupado_min === 120, JSON.stringify(plan.huecoPara(tB, '2026-04-20')));
 ok('hueco en un día vacío: 08:00', plan.huecoPara(tB, '2026-04-21').hora_inicio === '08:00' && plan.huecoPara(tB, '2026-04-21').ocupado_min === 0);
+
+// --- Agrupar por zona ------------------------------------------------------------------------------------------------------------
+const tD = usuario('td', 'Técnico D', 'tecnico', '0000005');
+const tE = usuario('te', 'Técnico E', 'tecnico', '0000006');
+const cli = (nombre, zona) => db.prepare('INSERT INTO clientes (nombre, zona) VALUES (?, ?)').run(nombre, zona).lastInsertRowid;
+const cA = cli('Cliente Araba', 'Araba'), cG = cli('Cliente Gipuzkoa', 'Gipuzkoa'), cSin = cli('Cliente sin zona', null);
+const otDe = (clienteId, tecnico, prevista) => { const id = ot({ tecnico, prevista }); db.prepare('UPDATE ot SET cliente_id = ? WHERE id = ?').run(clienteId, id); return id; };
+const zA1 = otDe(cA, tD, '2025-01-01'), zG1 = otDe(cG, tD, '2025-02-01'), zA2 = otDe(cA, tD, '2025-03-01'), zG2 = otDe(cG, tD, '2025-04-01'), zA3 = otDe(cA, tD, '2025-05-01'), zN = otDe(cSin, tD, '2025-06-01');
+r = lanzar();
+const diaDe = (id) => bloquesDe(id)[0].dia;
+ok('zonas: las de Araba van juntas el primer día y las de Gipuzkoa el siguiente, aunque por antigüedad vayan intercaladas', [zA1, zA2, zA3].every((id) => diaDe(id) === D1) && [zG1, zG2].every((id) => diaDe(id) === D2) && r.zonas_mezcladas === 0, JSON.stringify([zA1, zG1, zA2, zG2, zA3].map(diaDe)));
+ok('…la O.T. de un cliente sin zona cabe en cualquier día (el primero con hueco)', diaDe(zN) === D1 && delTecnico(tD, D1) === '08:00,10:00,12:00,14:00', `${diaDe(zN)} ${delTecnico(tD, D1)}`);
+const zonasDia = (t, dia) => plan.avisosDe(t, dia, db.prepare('SELECT b.id, b.hora_inicio, b.duracion_min, c.zona AS cliente_zona FROM ot_bloques b JOIN ot o ON o.id = b.ot_id JOIN clientes c ON c.id = o.cliente_id WHERE b.tecnico_id = ? AND b.dia = ?').all(t, dia)).filter((a) => a.tipo === 'zonas').length;
+ok('…y el Planificador no da aviso de zonas en esos días', zonasDia(tD, D1) === 0 && zonasDia(tD, D2) === 0);
+ok('huecoPara devuelve las zonas del día', plan.huecoPara(tD, D1).zonas.join() === 'Araba' && plan.huecoPara(tD, D2).zonas.join() === 'Gipuzkoa' && plan.huecoPara(tD, D4).zonas.length === 0);
+// Sin ningún día compatible en el horizonte: va al primero con hueco y se cuenta como zonas mezcladas.
+const fija = otDe(cA, tE, '2025-01-01');
+db.prepare('UPDATE ot SET version = 2 WHERE id = ?').run(fija);                    // tocada: sus bloques son manuales y la importación no la mira
+for (const dia of laborablesDesde(HOY, HORIZONTE_LABORABLES)) db.prepare("INSERT INTO ot_bloques (ot_id, tecnico_id, dia, hora_inicio, duracion_min) VALUES (?, ?, ?, '08:00', 120)").run(fija, tE, dia);
+const mezclada = otDe(cG, tE, '2025-02-01');
+r = lanzar();
+ok('sin día compatible en 20 días: se coloca en el primero con hueco y cuenta en zonas_mezcladas', diaDe(mezclada) === D1 && bloquesDe(mezclada)[0].hora_inicio === '10:00' && r.zonas_mezcladas === 1 && zonasDia(tE, D1) === 1, JSON.stringify(r));
+// recolocar: quita los automáticos repartidos de las O.T. no tocadas y los reparte de nuevo (aquí, tras cambiar la zona de un cliente).
+db.prepare("UPDATE clientes SET zona = 'Araba' WHERE id = ?").run(cG);
+r = lanzar();
+ok('sin recolocar, cambiar la zona de un cliente no mueve los bloques ya puestos', r.quitados === 0 && r.repartidas === 0 && diaDe(zG1) === D2);
+r = lanzar({ recolocar: true });
+ok('recolocar: se quitan y se reparten otra vez; ahora las 6 de la misma zona llenan el primer día y siguen en el segundo', r.quitados > 0 && r.repartidas === r.quitados && delTecnico(tD, D1) === '08:00,10:00,12:00,14:00' && delTecnico(tD, D2) === '08:00,10:00' && bloquesDe(enFecha2)[0].origen === 'manual' && bloquesDe(urgente).length === 1, JSON.stringify(r));
 
 console.log(res.join('\n'));
 const fallos = res.filter((x) => x.startsWith('FALLO')).length;
