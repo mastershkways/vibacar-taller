@@ -35,7 +35,7 @@ const RE_FLOTA = /^\d+$/; // F3.5-06: nº de flota numérico correlativo (sin F-
   x = await pedir('/api/sesion', { cookie: R });
   ok('responsable_st: todo menos usuarios.gestionar', x.j.usuario.rol === 'responsable_st' && !x.j.permisos.includes('usuarios.gestionar') && x.j.permisos.includes('ot.asignar') && x.j.permisos.includes('maquinas.gestionar') && x.j.alcance === 'todo');
   x = await pedir('/api/sesion', { cookie: G });
-  ok('gerencia: solo lectura (6 permisos de ver, con el Planificador)', x.j.usuario.rol === 'gerencia' && JSON.stringify([...x.j.permisos].sort()) === JSON.stringify(['clientes.ver', 'informes.ver', 'kanban.ver', 'maquinas.ver', 'ot.ver', 'planificador.ver']), JSON.stringify(x.j.permisos));
+  ok('gerencia: solo lectura (7 permisos de ver, con el Planificador y los fichajes)', x.j.usuario.rol === 'gerencia' && JSON.stringify([...x.j.permisos].sort()) === JSON.stringify(['clientes.ver', 'fichajes.ver', 'informes.ver', 'kanban.ver', 'maquinas.ver', 'ot.ver', 'planificador.ver']), JSON.stringify(x.j.permisos));
   x = await pedir('/api/sesion', { cookie: GS });
   ok('operativo (antes gestor_sat): alcance operativo, con asignar/aprobar/cerrar y sin maestros', x.j.usuario.rol === 'operativo' && x.j.alcance === 'operativo' && x.j.permisos.includes('ot.aprobar_asignacion') && x.j.permisos.includes('ot.cerrar') && !x.j.permisos.includes('clientes.gestionar'));
   x = await pedir('/api/sesion', { cookie: F });

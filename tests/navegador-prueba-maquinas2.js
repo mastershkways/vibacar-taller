@@ -119,7 +119,7 @@ const irMaquinas = async (p) => { await evaluar(p, `location.hash = 'maquinas'`)
   await salir(p);
   await entrar(p, 'responsable1', 'prueba123');
   await esperarHasta(p, `document.querySelectorAll('#nav .menu').length === 1`);
-  ok('responsable_st: cabecera, Planificador por defecto, Maestros sí y Usuarios no', (await evaluar(p, `document.querySelector('#usuario-rol').textContent`)) === 'Responsable de Servicio Técnico' && (await evaluar(p, `document.querySelector('#nav button.activo')?.textContent`)) === 'Planificador' && JSON.stringify(await textosNav(p)) === JSON.stringify(['Planificador', 'Tablero', 'Listado', 'Maestros']), (await textosNav(p)).join(' · '));
+  ok('responsable_st: cabecera, Planificador por defecto, Fichajes y Maestros sí y Usuarios no', (await evaluar(p, `document.querySelector('#usuario-rol').textContent`)) === 'Responsable de Servicio Técnico' && (await evaluar(p, `document.querySelector('#nav button.activo')?.textContent`)) === 'Planificador' && JSON.stringify(await textosNav(p)) === JSON.stringify(['Planificador', 'Tablero', 'Listado', 'Fichajes', 'Maestros']), (await textosNav(p)).join(' · '));
   await irMaquinas(p);
   await clicFila(p, 'MRT 2150');
   ok('responsable_st: ficha bloqueada sin botón "Editar campos bloqueados"; horas editables; Desactivar visible', await esperarHasta(p, `(() => { const m = document.querySelector('.modal'); if (!m) return false; return m.querySelector('[name=marca]').disabled && !m.querySelector('[name=horometro_ultimo]').disabled && m.querySelector('[data-ref="desbloquear"]').classList.contains('oculto') && !m.querySelector('[data-ref="desactivar"]').classList.contains('oculto'); })()`));

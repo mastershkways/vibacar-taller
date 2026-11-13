@@ -30,6 +30,10 @@ const S = {
   tecnicos: null,
   // Técnico (F4-05 / F4-06): datos de GET /api/mi-dia, O.T. de la ficha de trabajo abierta, sondeo y contador de segundos
   tec: { datos: null, etag: null, timer: null, tic: null, cargando: false, otId: null, ot: null },
+  // Fichajes (F4-07 / F4-08): mes y técnico de "Mis horas" (tecnicoId solo cuando mira la oficina), día que abrir al entrar,
+  // y la vista Fichajes de la oficina (mes, pestaña, datos de GET /api/jornadas y filtros de las incidencias)
+  horas: { mes: null, tecnicoId: null, datos: null, abrir: null },
+  fich: { mes: null, pestana: 'jornadas', datos: null, filtros: { estado: 'pendiente', tecnico_id: '' } },
 };
 
 const DIAS_CERRADAS = 0;     // F4-04: las cerradas desaparecen del Tablero (gerencia 2026-11-06); con N > 0 vuelve la columna con las de esos días
@@ -321,7 +325,9 @@ const VISTAS = {
   planificador: { titulo: 'Planificador', visible: () => puede('planificador.ver'), pintar: pintarPlanificador },
   kanban: { titulo: 'Tablero', visible: () => puede('kanban.ver'), pintar: pintarKanban },
   midia: { titulo: 'Mi día', visible: () => S.sesion.alcance === 'asignadas', pintar: pintarMiDia },
+  horas: { titulo: 'Mis horas', visible: () => S.sesion.alcance === 'asignadas', pintar: () => { S.horas.tecnicoId = null; pintarHoras(); } },
   listado: { titulo: 'Listado', visible: () => puede('ot.ver'), pintar: pintarListado },
+  fichajes: { titulo: 'Fichajes', visible: () => puede('fichajes.ver') && S.sesion.alcance !== 'asignadas', pintar: pintarFichajes },
   // Maestros: roles de oficina con clientes.ver / maquinas.ver; no en la tablet del técnico/SAT.
   clientes: { titulo: 'Clientes', grupo: 'Maestros', visible: () => puede('clientes.ver') && S.sesion.alcance !== 'asignadas', pintar: pintarClientes },
   maquinas: { titulo: 'Máquinas', grupo: 'Maestros', visible: () => puede('maquinas.ver') && S.sesion.alcance !== 'asignadas', pintar: pintarMaquinas },
@@ -442,9 +448,11 @@ function mostrarVista(nombre) {
   aplicarPermisos(app);
   for (const b of $$('[data-accion="nueva"]', app)) b.onclick = abrirNuevaOT;
   VISTAS[nombre].pintar();
+  refrescarContadorFichajes();
 }
 
 // Rutas por hash: #kanban | #midia | #listado | #ot/123 (detalle sobre la vista actual) | #trabajo/123 (ficha de trabajo del técnico)
+// | #horas (las del técnico) | #horas/12 (las de un técnico, para la oficina) | #fichajes
 function enrutar() {
   const h = location.hash.replace(/^#/, '');
   const m = h.match(/^ot\/(\d+)$/);
@@ -455,6 +463,8 @@ function enrutar() {
   }
   const t = h.match(/^trabajo\/(\d+)$/);
   if (t) { mostrarTrabajo(Number(t[1])); return; }
+  const hh = h.match(/^horas\/(\d+)$/);
+  if (hh) { mostrarHorasDe(Number(hh[1])); return; }
   mostrarVista(h || vistaPorDefecto());
 }
 
@@ -1308,8 +1318,7 @@ async function ficharCrono(otId, accion, nota) {
     return await enviar();
   } catch (e) {
     if (e.status === 409 && e.datos && e.datos.abierto) {
-      const a = e.datos.abierto;
-      const si = await elegir(`Tienes el cronómetro en marcha en la O.T. ${a.numero} (${String(a.nombre).toLowerCase()}). ¿Lo paras y empiezas en esta?`, [{ etiqueta: 'Sí, parar aquella y empezar aquí', valor: 1 }]);
+      const si = await elegir(`${e.message}. ¿Lo paras y empiezas en esta?`, [{ etiqueta: 'Sí, pararlo y empezar aquí', valor: 1 }]);
       if (!si) return null;
       try { return await enviar({ cerrar_otra: true }); } catch (e2) { if (e2.status !== 401) toast(e2.message, 'error'); return null; }
     }
@@ -1353,12 +1362,21 @@ function renderMiDia() {
   // Cronómetro en marcha: siempre a la vista, lleva a la ficha de esa O.T.
   const banner = ref('crono-banner', app);
   if (d.crono) {
-    const f = FASES[d.crono.tipo] || { nombre: d.crono.tipo, icono: '⏱' };
+    const f = faseDe(d.crono.tipo);
+    const otroDia = d.crono.otro_dia ? `<small>Abierto desde el ${esc(fecha(d.crono.inicio))}: ciérralo</small>` : '';
     banner.className = `crono-banner fase-${d.crono.tipo}${d.crono.otro_dia ? ' otro-dia' : ''}`;
-    banner.href = `#trabajo/${d.crono.ot_id}`;
-    banner.innerHTML = `<span class="cb-texto">${f.icono} <b>${esc(f.nombre)}</b> · O.T. ${esc(d.crono.numero)}${d.crono.otro_dia ? `<small>Abierto desde el ${esc(fecha(d.crono.inicio))}: ciérralo</small>` : ''}</span><b class="crono-tiempo" data-ref="banner-reloj"></b><span class="ir">Abrir ›</span>`;
+    if (d.crono.comodin) {   // comodín: no hay ficha a la que ir; el aviso lleva el botón de parar
+      banner.href = '#midia';
+      banner.innerHTML = `<span class="cb-texto">${f.icono} <b>${esc(f.nombre)}</b> · ${esc(d.crono.nombre)}${otroDia}</span><b class="crono-tiempo" data-ref="banner-reloj"></b><span class="btn btn-fase" role="button" data-accion="parar-comodin">■ Parar</span>`;
+      banner.onclick = (e) => { e.preventDefault(); if (e.target.closest('[data-accion="parar-comodin"]')) pararComodin(); };
+    } else {
+      banner.onclick = null;
+      banner.href = `#trabajo/${d.crono.ot_id}`;
+      banner.innerHTML = `<span class="cb-texto">${f.icono} <b>${esc(f.nombre)}</b> · O.T. ${esc(d.crono.numero)}${d.crono.otro_dia ? `<small>Abierto desde el ${esc(fecha(d.crono.inicio))}: ciérralo</small>` : ''}</span><b class="crono-tiempo" data-ref="banner-reloj"></b><span class="ir">Abrir ›</span>`;
+    }
     ponerTic(ref('banner-reloj', banner), d.crono.segundos, 'reloj');
   } else {
+    banner.onclick = null;
     banner.className = 'crono-banner oculto';
     banner.innerHTML = '';
   }
@@ -1366,7 +1384,9 @@ function renderMiDia() {
   // Resumen de horas del día: las tres fases y el total frente a la jornada.
   const r = d.resumen;
   const resumen = ref('resumen', app);
-  resumen.innerHTML = Object.entries(FASES).map(([tipo, f]) =>
+  const conComodin = r.comodin > 0 || !!(d.crono && d.crono.comodin);
+  resumen.classList.toggle('con-comodin', conComodin);
+  resumen.innerHTML = [...Object.entries(FASES), ...(conComodin ? [['comodin', FASE_COMODIN]] : [])].map(([tipo, f]) =>
     `<div class="pill fase-${tipo}${d.crono && d.crono.tipo === tipo ? ' activa' : ''}"><span>${f.icono} ${esc(f.nombre)}</span><b data-total="${tipo}">${duracionSeg(r[tipo])}</b></div>`).join('')
     + `<div class="pill total"><span>Fichado hoy</span><b data-total="total">${duracionSeg(r.total)}</b><small>de ${r.horas_dia} h${r.previsto_min ? ` · previsto ${textoDuracion(r.previsto_min)}` : ''}</small></div>`;
   if (d.crono && !d.crono.otro_dia) {
@@ -1377,6 +1397,8 @@ function renderMiDia() {
   // Tareas por grupo.
   const lista = ref('lista', app);
   lista.innerHTML = '';
+  const avisoJ = avisoJornada(d);
+  if (avisoJ) lista.append(avisoJ);
   for (const [grupo, titulo] of GRUPOS_TAREA) {
     const tareas = d.tareas.filter((t) => t.grupo === grupo).sort((a, b) => (b.crono ? 1 : 0) - (a.crono ? 1 : 0));   // la del cronómetro en marcha, la primera
     if (!tareas.length) continue;
@@ -1387,7 +1409,8 @@ function renderMiDia() {
     for (const t of tareas) $('.tareas', sec).append(tarjetaTarea(t));
     lista.append(sec);
   }
-  if (!d.tareas.length) lista.innerHTML = '<div class="vacio">No tienes nada para hoy.</div>';
+  if (!d.tareas.length) lista.insertAdjacentHTML('beforeend', '<div class="vacio">No tienes nada para hoy.</div>');
+  lista.append(tarjetaComodin(d));
 
   // Próximos días (solo consulta).
   if (d.proximos.length) {
@@ -1537,6 +1560,7 @@ function renderTrabajo() {
   const avisos = ref('avisos', ficha);
   const otro = S.tec.datos && S.tec.datos.crono && S.tec.datos.crono.ot_id !== ot.id ? S.tec.datos.crono : null;
   if (!activa) aviso(avisos, `Esta O.T. está en "${ot.estado_nombre}": ya no se ficha en ella.`, 'info');
+  else if (otro && otro.comodin) aviso(avisos, `Tienes el cronómetro en marcha en el comodín (${otro.nombre}).`, 'conflicto', 'Ir a Mi día', () => { location.hash = 'midia'; });
   else if (otro) aviso(avisos, `Tienes el cronómetro en marcha en la O.T. ${otro.numero} (${String(otro.nombre).toLowerCase()}).`, 'conflicto', 'Ir a esa O.T.', () => { location.hash = `trabajo/${otro.ot_id}`; });
   else avisos.innerHTML = '';
 
@@ -1606,7 +1630,7 @@ function renderTrabajo() {
   const tramos = ref('tramos', ficha);
   ref('n-tramos', ficha).textContent = ot.tiempos.length ? `${ot.tiempos.length}` : '';
   tramos.innerHTML = ot.tiempos.length
-    ? ot.tiempos.map((t) => `<li class="fase-${esc(t.tipo)}"><span class="punto-fase"></span><span>${esc(fecha(t.inicio.slice(0, 10)).slice(0, 5))} ${horaCorta(t.inicio)}–${t.fin ? horaCorta(t.fin) : 'ahora'}</span><span>${esc((FASES[t.tipo] || {}).nombre || t.tipo)}${t.tecnico_id !== yo ? ` · ${esc(t.tecnico_nombre)}` : ''}${t.nota ? ` · <small>${esc(t.nota)}</small>` : ''}</span><b>${t.fin ? duracionSeg(t.segundos) : 'en marcha'}</b></li>`).join('')
+    ? ot.tiempos.map((t) => `<li class="fase-${esc(t.tipo)}"><span class="punto-fase"></span><span>${esc(fecha(t.inicio.slice(0, 10)).slice(0, 5))} ${horaCorta(t.inicio)}–${t.fin ? horaCorta(t.fin) : 'ahora'}</span><span>${esc((FASES[t.tipo] || {}).nombre || t.tipo)}${t.tecnico_id !== yo ? ` · ${esc(t.tecnico_nombre)}` : ''}${t.nota ? ` · <small>${esc(t.nota)}</small>` : ''}${t.origen === 'manual' ? ' · <small>corregido</small>' : ''}</span><b>${t.fin ? duracionSeg(t.segundos) : 'en marcha'}</b></li>`).join('')
     : '<li class="suave">Todavía no has fichado nada en esta O.T.</li>';
 
   // Acciones fijas: Parar por hoy (necesita el cronómetro en marcha), Pausar y Terminar (bloqueado si falta algo).
@@ -1634,6 +1658,521 @@ function renderTrabajo() {
     if (await abrirCambioEstado(S.tec.ot, 'finalizada')) location.hash = 'midia';
     else if (S.vista === 'trabajo') cargarTrabajo();
   };
+}
+
+// ---------------------------------------------------------------------------
+// Fichajes (F4-07 + F4-08): O.T. comodín, jornadas e incidencias de fichaje.
+//
+// - En "Mi día": aviso de los días recientes que no llegan a la jornada y la tarjeta "Horas sin O.T." (el comodín del mes:
+//   taller, formación, sin trabajo asignado…), con el mismo cronómetro que las O.T.
+// - Mis horas (#horas): el mes del técnico día a día, con sus fichajes; desde ahí pide correcciones (corregir, quitar o
+//   añadir tiempo), que la oficina aprueba o rechaza. La oficina ve la misma pantalla de cualquier técnico (#horas/ID) y,
+//   si puede gestionar, corrige directamente.
+// - Fichajes (#fichajes, oficina): una fila por técnico y una celda por día con las horas fichadas, y las incidencias.
+// ---------------------------------------------------------------------------
+const FASE_COMODIN = { nombre: 'Sin O.T.', icono: '🗂' };
+const faseDe = (tipo) => FASES[tipo] || (tipo === 'comodin' ? FASE_COMODIN : { nombre: tipo, icono: '⏱' });
+const MESES = ['enero', 'febrero', 'marzo', 'abril', 'mayo', 'junio', 'julio', 'agosto', 'septiembre', 'octubre', 'noviembre', 'diciembre'];
+const DIAS_ABREV = ['dom', 'lun', 'mar', 'mié', 'jue', 'vie', 'sáb'];
+const ESTADOS_INCIDENCIA = { pendiente: 'Pendiente', aprobada: 'Aprobada', rechazada: 'Rechazada', anulada: 'Retirada' };
+const mesLargo = (mes) => { const [a, m] = mes.split('-').map(Number); return `${MESES[m - 1][0].toUpperCase()}${MESES[m - 1].slice(1)} de ${a}`; };   // "Noviembre de 2026"
+const sumarMes = (mes, n) => { const [a, m] = mes.split('-').map(Number); const f = new Date(a, m - 1 + n, 1); return `${f.getFullYear()}-${dosDigitos(f.getMonth() + 1)}`; };
+const finDeMes = (mes) => { const [a, m] = mes.split('-').map(Number); return isoDe(new Date(a, m, 0)); };
+const diaSemana = (iso) => `${DIAS_ABREV[fechaLocal(iso).getDay()]} ${iso.slice(8, 10)}/${iso.slice(5, 7)}`;   // "jue 12/11"
+const horasDec = (seg) => (seg / 3600).toLocaleString('es-ES', { maximumFractionDigits: 1 });
+
+// Contador de incidencias pendientes: en el botón "Fichajes" de la cabecera y en la pestaña de la vista.
+function ponerContadorFichajes(n) {
+  const b = $('#nav button[data-vista="fichajes"]');
+  if (b) {
+    let c = $('.nav-contador', b);
+    if (!n) { if (c) c.remove(); } else {
+      if (!c) { c = document.createElement('span'); c.className = 'nav-contador'; b.append(c); }
+      c.textContent = String(n);
+    }
+  }
+  const v = S.vista === 'fichajes' ? ref('n-pend', app) : null;
+  if (v) v.textContent = n ? String(n) : '';
+}
+async function refrescarContadorFichajes() {
+  if (!VISTAS.fichajes.visible()) return;
+  try { ponerContadorFichajes((await api('/api/incidencias/pendientes')).n); } catch { /* sin contador */ }
+}
+
+// --- Mi día: aviso de jornadas y comodín ---------------------------------------
+function avisoJornada(d) {
+  const bajas = d.jornadas_bajas || [];
+  if (!bajas.length && !d.incidencias_pendientes) return null;
+  const sec = document.createElement('section');
+  sec.className = 'aviso-jornada';
+  sec.dataset.ref = 'aviso-jornada';
+  let html = '';
+  if (bajas.length) {
+    html += `<h3>⚠ ${bajas.length === 1 ? 'Un día no llega' : `${bajas.length} días no llegan`} a las ${d.resumen.horas_dia} h</h3><div class="dias-bajos">`
+      + bajas.map((b) => `<button type="button" class="dia-bajo" data-dia="${esc(b.dia)}"><b>${esc(diaSemana(b.dia))}</b><span>${b.estado === 'sin_fichar' ? 'sin fichar' : `${duracionSeg(b.total)} fichados`}</span><small>faltan ${duracionSeg(b.falta)}</small></button>`).join('')
+      + '</div>';
+  }
+  if (d.incidencias_pendientes) {
+    html += `<div class="pendientes">⏳ ${d.incidencias_pendientes === 1 ? 'Tienes una corrección pendiente' : `Tienes ${d.incidencias_pendientes} correcciones pendientes`} de que la apruebe la oficina.</div>`;
+    if (!bajas.length) html += '<div><button type="button" class="btn" data-accion="mis-horas">Ver mis horas</button></div>';
+  }
+  sec.innerHTML = html;
+  for (const b of $$('.dia-bajo', sec)) b.onclick = () => { S.horas.abrir = b.dataset.dia; location.hash = 'horas'; };
+  const mh = $('[data-accion="mis-horas"]', sec);
+  if (mh) mh.onclick = () => { location.hash = 'horas'; };
+  return sec;
+}
+
+function tarjetaComodin(d) {
+  const cm = d.comodin;
+  if (!cm || d.dia !== d.hoy) return document.createDocumentFragment();
+  const enMarcha = d.crono && d.crono.comodin ? d.crono : null;
+  const sec = document.createElement('section');
+  sec.className = 'seccion-comodin';
+  sec.dataset.ref = 'comodin';
+  sec.innerHTML = `<h3>Horas sin O.T.</h3>
+    <article class="comodin-tarjeta${enMarcha ? ' con-crono fase-comodin' : ''}">
+      <div class="comodin-titulo">${enMarcha ? `<span>${FASE_COMODIN.icono} ${esc(enMarcha.nombre)}</span><b class="crono-tiempo" data-ref="crono"></b>` : '<span>Taller, formación, sin trabajo asignado…</span>'}</div>
+      <div class="tarea-pie"><span class="dato-chip">Hoy <b>${duracionSeg(cm.dia_seg)}</b></span><span class="dato-chip">Este mes <b>${duracionSeg(cm.mes_seg)}</b></span><span class="dato-chip" title="O.T. comodín del mes">${esc(cm.codigo)}</span></div>
+      <div class="tarea-botones">${enMarcha
+        ? '<button type="button" class="btn btn-grande btn-fase fase-comodin" data-accion="parar-comodin">■ Parar</button><button type="button" class="btn btn-grande" data-accion="empezar-comodin">Cambiar</button>'
+        : '<button type="button" class="btn btn-grande" data-accion="empezar-comodin">＋ Imputar horas sin O.T.</button>'}</div>
+    </article>`;
+  if (enMarcha) ponerTic(ref('crono', sec), enMarcha.segundos, 'reloj');
+  $('[data-accion="empezar-comodin"]', sec).onclick = empezarComodin;
+  const parar = $('[data-accion="parar-comodin"]', sec);
+  if (parar) parar.onclick = pararComodin;
+  return sec;
+}
+
+// Elige el concepto y arranca el cronómetro del comodín. Si lo tiene en una O.T., pregunta antes de pararlo.
+async function empezarComodin() {
+  const d = S.tec.datos;
+  if (!d || !d.comodin) return;
+  const actual = d.crono && d.crono.comodin ? d.crono.concepto : null;
+  const codigo = await elegir('¿A qué dedicas este tiempo?', d.comodin.conceptos.filter((c) => c.codigo !== actual).map((c) => ({ etiqueta: c.nombre, valor: c.codigo })));
+  if (!codigo) return;
+  const c = d.comodin.conceptos.find((x) => x.codigo === codigo);
+  let nota;
+  if (c.pide_nota) {
+    nota = await pedirNota({ titulo: c.nombre, pista: 'Di en pocas palabras qué vas a hacer.', etiqueta: 'Qué es', obligatoria: true, boton: 'Empezar' });
+    if (nota === null) return;
+  }
+  const enviar = (extra = {}) => api('/api/comodin/crono', { method: 'POST', body: { accion: 'empezar', concepto: codigo, nota: nota || undefined, ...extra } });
+  try {
+    await enviar();
+  } catch (e) {
+    if (e.status === 409 && e.datos && e.datos.abierto) {
+      const si = await elegir(`${e.message}. ¿Lo paras y empiezas con "${c.nombre}"?`, [{ etiqueta: 'Sí, pararlo y empezar', valor: 1 }]);
+      if (!si) return;
+      try { await enviar({ cerrar_otra: true }); } catch (e2) { if (e2.status !== 401) toast(e2.message, 'error'); return; }
+    } else { if (e.status !== 401) toast(e.message, 'error'); return; }
+  }
+  toast(`Sin O.T.: ${c.nombre}`, 'ok');
+  await cargarMiDia(true);
+}
+
+async function pararComodin() {
+  try {
+    await api('/api/comodin/crono', { method: 'POST', body: { accion: 'parar' } });
+    toast('Cronómetro parado', 'ok');
+  } catch (e) { if (e.status !== 401) toast(e.message, 'error'); }
+  await cargarMiDia(true);
+}
+
+// --- Incidencias: tarjeta y diálogo de corrección -------------------------------
+function tarjetaIncidencia(i, { oficina = false, gestionar = false, alCambiar = null } = {}) {
+  const el = document.createElement('article');
+  el.className = `incidencia e-${i.estado}`;
+  el.dataset.id = i.id;
+  const cambio = i.accion === 'anadir' ? `＋ ${esc(i.propuesta_texto)}`
+    : i.accion === 'quitar' ? `− <s>${esc(i.antes_texto)}</s>`
+      : `<s>${esc(i.antes_texto)}</s> → ${esc(i.propuesta_texto)}`;
+  const pie = [`${i.directa ? 'Corregida' : 'Pedida'} el ${esc(fecha(i.creado))} por ${esc(i.solicitante_nombre)}`];
+  if (i.estado !== 'pendiente' && !i.directa) pie.push(`${ESTADOS_INCIDENCIA[i.estado]} el ${esc(fecha(i.resuelto))}${i.estado === 'anulada' ? '' : ` por ${esc(i.resuelto_por_nombre || '')}`}`);
+  el.innerHTML = `
+    <div class="inc-cab"><b>${esc(i.accion_nombre)}</b><span>${esc(diaSemana(i.dia))}${i.ot_numero ? ` · O.T. ${esc(i.ot_numero)}` : ''}</span>${oficina ? `<span class="suave">· ${esc(i.tecnico_nombre)}</span>` : ''}<span class="chip e-${i.estado}">${esc(ESTADOS_INCIDENCIA[i.estado] || i.estado)}</span></div>
+    <div class="inc-cambio">${cambio}</div>
+    <div class="inc-motivo">${esc(i.motivo)}</div>
+    ${i.respuesta ? `<div class="inc-pie"><b>Respuesta:</b> ${esc(i.respuesta)}</div>` : ''}
+    <div class="inc-pie">${pie.join(' · ')}</div>
+    <div class="inc-botones"></div>`;
+  const botones = $('.inc-botones', el);
+  const boton = (accion, texto, clase, fn) => {
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.className = `btn ${clase}`;
+    b.dataset.accion = accion;
+    b.textContent = texto;
+    b.onclick = async () => { b.disabled = true; try { await fn(); } finally { b.disabled = false; } };
+    botones.append(b);
+  };
+  if (i.estado === 'pendiente' && gestionar) {
+    boton('aprobar', '✓ Aprobar', 'btn-primario', () => resolverIncidencia(i, true, alCambiar));
+    boton('rechazar', 'Rechazar', '', () => resolverIncidencia(i, false, alCambiar));
+  }
+  if (i.estado === 'pendiente' && i.solicitante_id === S.sesion.usuario.id) {
+    boton('retirar', 'Retirar', '', async () => {
+      try { await api(`/api/incidencias/${i.id}`, { method: 'DELETE' }); toast('Corrección retirada', 'ok'); } catch (e) { if (e.status !== 401) toast(e.message, 'error'); }
+      if (alCambiar) await alCambiar();
+    });
+  }
+  if (!botones.children.length) botones.remove();
+  return el;
+}
+
+async function resolverIncidencia(i, aprobar, alCambiar) {
+  let respuesta;
+  if (!aprobar) {
+    respuesta = await pedirNota({ titulo: 'Rechazar la corrección', pista: `${i.tecnico_nombre}: ${i.motivo}`, etiqueta: 'Por qué se rechaza', obligatoria: true, boton: 'Rechazar' });
+    if (respuesta === null) return;
+  }
+  try {
+    const r = await api(`/api/incidencias/${i.id}/resolver`, { method: 'POST', body: { aprobar, respuesta } });
+    toast(aprobar ? 'Corrección aprobada y aplicada' : 'Corrección rechazada', 'ok');
+    ponerContadorFichajes(r.pendientes);
+  } catch (e) { if (e.status !== 401) toast(e.message, 'error'); }
+  if (alCambiar) await alCambiar();
+}
+
+const textoTramoPlano = (t) => `${horaCorta(t.inicio)}–${horaCorta(t.fin)} ${t.comodin_id ? `sin O.T. (${t.concepto_nombre || t.concepto})` : `${faseDe(t.tipo).nombre.toLowerCase()}, O.T. ${t.numero}`}`;
+
+// Pide (técnico) o aplica (oficina con fichajes.gestionar) una corrección. accion: anadir | modificar | quitar.
+// `detalle` es la respuesta de GET /api/jornadas/dia (técnico, día, O.T. imputables y conceptos).
+function abrirCorreccion({ accion, tramo = null, detalle, oficina = false, alTerminar = null }) {
+  const nodo = tpl('tpl-correccion');
+  const form = ref('form', nodo);
+  const titulos = oficina
+    ? { anadir: 'Añadir un fichaje', modificar: 'Corregir el fichaje', quitar: 'Quitar el fichaje' }
+    : { anadir: 'Pedir que se añada tiempo', modificar: 'Pedir una corrección', quitar: 'Pedir que se quite un fichaje' };
+  ref('titulo', nodo).textContent = titulos[accion];
+  ref('resumen', nodo).textContent = `${oficina ? `${detalle.tecnico.nombre} · ` : ''}${diaLargo(detalle.dia)}${tramo ? ` · ${textoTramoPlano(tramo)}` : ''}. `
+    + (oficina ? 'Se aplica en el momento y queda anotado.' : 'La oficina tiene que aprobarla: hasta entonces el fichaje no cambia.');
+  ref('guardar', nodo).textContent = oficina ? (accion === 'quitar' ? 'Quitar el fichaje' : 'Guardar') : 'Enviar a la oficina';
+  const destino = form.elements.destino, tipo = form.elements.tipo, numero = form.elements.ot_numero;
+  const ponerTipos = () => {
+    const comodin = accion === 'anadir' ? destino.value === 'comodin' : !!(tramo && tramo.comodin_id);
+    ref('et-tipo', nodo).textContent = comodin ? 'Concepto' : 'Tipo de tiempo';
+    tipo.innerHTML = comodin
+      ? detalle.conceptos.map((c) => `<option value="${esc(c.codigo)}">${esc(c.nombre)}</option>`).join('')
+      : Object.entries(FASES).map(([k, f]) => `<option value="${k}">${esc(f.nombre)}</option>`).join('');
+    if (!comodin && accion === 'anadir') tipo.value = 'trabajo';
+    numero.classList.toggle('oculto', destino.value !== 'numero');
+    numero.required = destino.value === 'numero';
+  };
+  // Ausencias (vacaciones, baja, festivo): al elegir una con las horas vacías se propone la jornada entera.
+  tipo.onchange = () => {
+    const c = accion === 'anadir' && destino.value === 'comodin' ? detalle.conceptos.find((x) => x.codigo === tipo.value) : null;
+    if (!c || !c.ausencia || form.elements.inicio.value || form.elements.fin.value) return;
+    form.elements.inicio.value = '08:00';
+    form.elements.fin.value = horaDe(Math.min(8 * 60 + Math.round(detalle.horas_dia * 60), 23 * 60 + 59));
+  };
+  if (accion === 'anadir') {
+    destino.innerHTML = detalle.ots.map((o) => `<option value="ot:${o.id}">O.T. ${esc(o.numero)} · ${esc(o.cliente_nombre)}</option>`).join('')
+      + '<option value="comodin">Sin O.T. (comodín)</option>'
+      + (oficina ? '<option value="numero">Otra O.T. (por número)…</option>' : '');
+    destino.onchange = ponerTipos;
+  } else ref('bloque-destino', nodo).classList.add('oculto');
+  ponerTipos();
+  if (accion === 'modificar') {
+    tipo.value = tramo.comodin_id ? tramo.concepto : tramo.tipo;
+    form.elements.inicio.value = horaCorta(tramo.inicio);
+    form.elements.fin.value = horaCorta(tramo.fin);
+  }
+  if (accion === 'quitar') {
+    ref('bloque-tipo', nodo).classList.add('oculto');
+    ref('bloque-horas', nodo).classList.add('oculto');
+    form.elements.inicio.required = form.elements.fin.required = false;
+  }
+  form.onsubmit = async (e) => {
+    e.preventDefault();
+    const body = { accion, motivo: form.elements.motivo.value.trim() };
+    if (oficina) body.tecnico_id = detalle.tecnico.id;
+    if (accion !== 'anadir') body.tramo_id = tramo.id;
+    if (accion !== 'quitar') { body.inicio = form.elements.inicio.value; body.fin = form.elements.fin.value; }
+    if (accion === 'anadir') {
+      body.dia = detalle.dia;
+      if (destino.value === 'comodin') { body.comodin = true; body.concepto = tipo.value; }
+      else {
+        body.tipo = tipo.value;
+        if (destino.value === 'numero') body.ot_numero = numero.value.trim(); else body.ot_id = Number(destino.value.slice(3));
+      }
+    } else if (accion === 'modificar') {
+      if (tramo.comodin_id) body.concepto = tipo.value; else body.tipo = tipo.value;
+    }
+    const guardar = ref('guardar', nodo);
+    guardar.disabled = true;
+    try {
+      const r = await api('/api/incidencias', { method: 'POST', body });
+      cerrarModal(nodo);
+      toast(r.incidencia.estado === 'aprobada' ? 'Fichaje corregido' : 'Corrección enviada: la oficina tiene que aprobarla', 'ok');
+      if (alTerminar) await alTerminar();
+    } catch (err) {
+      if (err.status !== 401) aviso(ref('avisos', nodo), err.message, 'error');
+    } finally {
+      guardar.disabled = false;
+    }
+  };
+  abrirModal(nodo);
+}
+
+// --- Mis horas / horas de un técnico ---------------------------------------------
+// La oficina llega aquí desde Fichajes con #horas/ID (no es una vista del menú para ella).
+function mostrarHorasDe(id) {
+  if (S.sesion.alcance === 'asignadas') { location.hash = 'horas'; return; }
+  if (!puede('fichajes.ver')) { mostrarVista(vistaPorDefecto()); return; }
+  pararPolling();
+  pararPollingPlan();
+  pararTecnico();
+  S.vista = 'horas';
+  S.horas.tecnicoId = id;
+  for (const b of $$('#nav button[data-vista]')) b.classList.toggle('activo', b.dataset.vista === 'fichajes');
+  for (const m of $$('#nav .menu')) m.classList.remove('activo');
+  app.innerHTML = '';
+  app.append(document.getElementById('tpl-horas').content.cloneNode(true));
+  app.classList.remove('entra'); void app.offsetWidth; app.classList.add('entra');
+  pintarHoras();
+}
+
+function pintarHoras() {
+  const h = S.horas;
+  if (h.abrir) h.mes = h.abrir.slice(0, 7);
+  if (!h.mes) h.mes = hoyISO().slice(0, 7);
+  h.datos = null;
+  const volver = $('[data-accion="volver"]', app);
+  volver.classList.toggle('oculto', !h.tecnicoId);
+  volver.onclick = () => { location.hash = 'fichajes'; };
+  $('[data-accion="mes-ant"]', app).onclick = () => { h.mes = sumarMes(h.mes, -1); cargarHoras(); };
+  $('[data-accion="mes-sig"]', app).onclick = () => { h.mes = sumarMes(h.mes, 1); cargarHoras(); };
+  cargarHoras();
+}
+
+async function cargarHoras() {
+  const h = S.horas;
+  if (S.vista !== 'horas') return;
+  const mes = h.mes, tec = h.tecnicoId ? `&tecnico_id=${h.tecnicoId}` : '';
+  ref('mes', app).textContent = mesLargo(mes);
+  try {
+    const [j, inc] = await Promise.all([api(`/api/jornadas?mes=${mes}${tec}`), api(`/api/incidencias?estado=todas&desde=${mes}-01&hasta=${finDeMes(mes)}${tec}`)]);
+    if (S.vista !== 'horas' || h.mes !== mes) return;
+    h.datos = { j, incidencias: inc.incidencias };
+    if (h.tecnicoId) ponerContadorFichajes(j.incidencias_pendientes);
+    renderHoras();
+  } catch (e) {
+    if (e.status === 401 || S.vista !== 'horas') return;
+    ref('dias', app).innerHTML = `<div class="vacio">${esc(e.message)}</div>`;
+  }
+}
+
+function renderHoras() {
+  const h = S.horas, { j, incidencias } = h.datos;
+  const t = j.tecnicos[0];
+  const oficina = !!h.tecnicoId;
+  const dias = ref('dias', app), resumen = ref('resumen', app), cajaInc = ref('incidencias', app);
+  ref('titulo', app).textContent = oficina ? `Horas de ${t ? t.nombre : '…'}` : 'Mis horas';
+  if (!t) { resumen.innerHTML = ''; cajaInc.innerHTML = ''; dias.innerHTML = '<div class="vacio">Técnico no encontrado.</div>'; return; }
+
+  // Resumen del mes.
+  const tt = t.totales;
+  const pill = (clase, etiqueta, valor, pie = '') => `<div class="pill ${clase}"><span>${etiqueta}</span><b>${valor}</b>${pie ? `<small>${pie}</small>` : ''}</div>`;
+  resumen.innerHTML = pill('total', 'Fichado en el mes', duracionSeg(tt.total))
+    + Object.entries(FASES).map(([k, f]) => pill(`fase-${k}`, `${f.icono} ${esc(f.nombre)}`, duracionSeg(tt[k]))).join('')
+    + pill('fase-comodin', `${FASE_COMODIN.icono} Sin O.T.`, duracionSeg(tt.comodin))
+    + (t.rol === 'tecnico'
+      ? pill(`falta${tt.dias_bajos ? '' : ' bien'}`, `Días por debajo de ${j.horas_dia} h`, String(tt.dias_bajos), tt.falta ? `faltan ${duracionSeg(tt.falta)}` : 'todo justificado')
+      : pill('falta bien', 'Jornada', '—', 'el SAT no la justifica'));
+
+  // Correcciones del mes (pendientes arriba).
+  const pend = incidencias.filter((i) => i.estado === 'pendiente').length;
+  const estabaAbierto = !!$('details[open]', cajaInc);
+  cajaInc.innerHTML = '';
+  if (incidencias.length) {
+    const det = document.createElement('details');
+    det.open = pend > 0 || estabaAbierto;
+    det.innerHTML = `<summary>Correcciones del mes <span class="chip chip-claro">${incidencias.length}</span><span class="n-pend">${pend || ''}</span></summary><div class="incidencias"></div>`;
+    for (const i of incidencias) $('.incidencias', det).append(tarjetaIncidencia(i, { oficina: false, gestionar: oficina && !!j.puede_gestionar, alCambiar: cargarHoras }));
+    cajaInc.append(det);
+  }
+
+  // Días: hasta hoy, los laborables y los que tengan fichajes; el más reciente arriba.
+  const abiertos = new Set($$('.dia[open]', dias).map((d) => d.dataset.dia));
+  if (h.abrir) abiertos.add(h.abrir);
+  const laborable = new Set(j.dias.filter((d) => d.laborable).map((d) => d.dia));
+  const lista = t.dias.filter((d) => d.estado !== 'futuro' && (d.tramos > 0 || laborable.has(d.dia))).reverse();
+  dias.innerHTML = lista.length ? '' : '<div class="vacio">Este mes aún no tiene días que mostrar.</div>';
+  const objetivo = j.horas_dia * 3600;
+  for (const d of lista) {
+    const det = document.createElement('details');
+    det.className = `dia e-${d.estado}`;
+    det.dataset.dia = d.dia;
+    const base = Math.max(objetivo, d.total);
+    const barra = ['desplazamiento', 'espera', 'trabajo', 'comodin'].filter((k) => d[k] > 0).map((k) => `<i class="fase-${k}" style="width:${((d[k] / base) * 100).toFixed(1)}%"></i>`).join('');
+    const chips = [];
+    if (d.estado === 'hoy') chips.push('<span class="dato-chip">Hoy</span>');
+    if (d.estado === 'bajo') chips.push(`<span class="dato-chip falta">Faltan ${duracionSeg(d.falta)}</span>`);
+    if (d.estado === 'sin_fichar') chips.push('<span class="dato-chip sin">Sin fichar</span>');
+    if (d.abierto) chips.push('<span class="dato-chip fase-trabajo">En marcha</span>');
+    if (d.revisar) chips.push('<span class="dato-chip revisar">⚠ Revisar</span>');
+    if (d.pendientes) chips.push(`<span class="dato-chip revisar">⏳ ${d.pendientes} pendiente${d.pendientes > 1 ? 's' : ''}</span>`);
+    det.innerHTML = `<summary><span class="dia-fecha">${esc(diaSemana(d.dia))}</span><span class="dia-barra">${barra}</span><b class="dia-total">${d.total ? duracionSeg(d.total) : '—'}</b><span class="dia-estado">${chips.join('')}</span></summary><div class="dia-cuerpo"><div class="vacio">Cargando…</div></div>`;
+    det.addEventListener('toggle', () => { if (det.open) cargarDiaHoras(det); });
+    dias.append(det);
+    if (abiertos.has(d.dia)) det.open = true;
+  }
+  if (h.abrir) {
+    const el = $(`.dia[data-dia="${h.abrir}"]`, dias);
+    if (el) el.scrollIntoView({ block: 'center' });
+    h.abrir = null;
+  }
+}
+
+async function cargarDiaHoras(det) {
+  const h = S.horas;
+  try {
+    const d = await api(`/api/jornadas/dia?dia=${det.dataset.dia}${h.tecnicoId ? `&tecnico_id=${h.tecnicoId}` : ''}`);
+    if (det.isConnected) renderDiaHoras(det, d);
+  } catch (e) {
+    if (e.status !== 401 && det.isConnected) $('.dia-cuerpo', det).innerHTML = `<div class="vacio">${esc(e.message)}</div>`;
+  }
+}
+
+function renderDiaHoras(det, d) {
+  const oficina = !!S.horas.tecnicoId;
+  const puedeCorregir = oficina ? !!d.puede_gestionar : true;
+  const cuerpo = $('.dia-cuerpo', det);
+  cuerpo.innerHTML = '';
+  if (d.tramos.length) {
+    const ul = document.createElement('ul');
+    ul.className = 'tramos tramos-dia';
+    for (const t of d.tramos) {
+      const li = document.createElement('li');
+      li.className = `fase-${t.tipo}`;
+      li.dataset.tramo = t.id;
+      const f = faseDe(t.tipo);
+      const que = t.comodin_id
+        ? `${f.icono} Sin O.T. · ${esc(t.concepto_nombre || t.concepto)}`
+        : `${f.icono} ${esc(f.nombre)} · O.T. ${esc(t.numero)} <small>${esc(t.cliente_nombre || '')}</small>`;
+      const otroDia = t.fin && t.fin.slice(0, 10) !== t.inicio.slice(0, 10);
+      const marcas = [];
+      if (t.revisar) marcas.push('<span class="dato-chip revisar">⚠ Revisar</span>');
+      if (t.origen === 'manual') marcas.push('<span class="dato-chip manual">Corregido</span>');
+      if (t.incidencia_pendiente) marcas.push('<span class="dato-chip revisar">⏳ Corrección pedida</span>');
+      li.innerHTML = `<span class="punto-fase"></span><span class="tr-hora">${horaCorta(t.inicio)}–${t.fin ? horaCorta(t.fin) + (otroDia ? ` (${esc(fecha(t.fin.slice(0, 10)).slice(0, 5))})` : '') : 'ahora'}</span>`
+        + `<span class="tr-que">${que}${t.nota ? ` · <small>${esc(t.nota)}</small>` : ''}</span><b>${t.fin ? duracionSeg(t.segundos) : 'en marcha'}</b>`
+        + (marcas.length ? `<span class="tr-marcas">${marcas.join('')}</span>` : '');
+      if (puedeCorregir && t.fin && !t.incidencia_pendiente) {
+        const bot = document.createElement('span');
+        bot.className = 'tr-botones';
+        bot.innerHTML = '<button type="button" class="btn btn-pequeno" data-accion="corregir">Corregir</button><button type="button" class="btn btn-pequeno" data-accion="quitar">Quitar</button>';
+        $('[data-accion="corregir"]', bot).onclick = () => abrirCorreccion({ accion: 'modificar', tramo: t, detalle: d, oficina, alTerminar: cargarHoras });
+        $('[data-accion="quitar"]', bot).onclick = () => abrirCorreccion({ accion: 'quitar', tramo: t, detalle: d, oficina, alTerminar: cargarHoras });
+        li.append(bot);
+      }
+      ul.append(li);
+    }
+    cuerpo.append(ul);
+  } else cuerpo.innerHTML = '<div class="vacio">Sin fichajes este día.</div>';
+  if (puedeCorregir) {
+    const pie = document.createElement('div');
+    pie.className = 'dia-pie';
+    pie.innerHTML = `<button type="button" class="btn" data-accion="anadir">＋ ${oficina ? 'Añadir un fichaje' : 'Añadir tiempo que falta'}</button>`;
+    $('button', pie).onclick = () => abrirCorreccion({ accion: 'anadir', detalle: d, oficina, alTerminar: cargarHoras });
+    cuerpo.append(pie);
+  }
+}
+
+// --- Fichajes (oficina): jornadas de todos e incidencias ---------------------------
+function pintarFichajes() {
+  const f = S.fich;
+  if (!f.mes) f.mes = hoyISO().slice(0, 7);
+  const form = ref('filtros', app);
+  form.elements.estado.value = f.filtros.estado;
+  form.onsubmit = (e) => e.preventDefault();
+  form.onchange = () => { f.filtros.estado = form.elements.estado.value; f.filtros.tecnico_id = form.elements.tecnico_id.value; cargarIncidenciasFichajes(); };
+  for (const b of $$('[data-pestana]', app)) b.onclick = () => { f.pestana = b.dataset.pestana; ponerPestanaFichajes(); };
+  $('[data-accion="mes-ant"]', app).onclick = () => { f.mes = sumarMes(f.mes, -1); cargarFichajes(); };
+  $('[data-accion="mes-sig"]', app).onclick = () => { f.mes = sumarMes(f.mes, 1); cargarFichajes(); };
+  ponerPestanaFichajes();
+  cargarFichajes();
+}
+
+function ponerPestanaFichajes() {
+  const f = S.fich;
+  for (const b of $$('[data-pestana]', app)) b.classList.toggle('activo', b.dataset.pestana === f.pestana);
+  ref('panel-jornadas', app).classList.toggle('oculto', f.pestana !== 'jornadas');
+  ref('panel-incidencias', app).classList.toggle('oculto', f.pestana !== 'incidencias');
+  ref('mes-nav', app).classList.toggle('oculto', f.pestana !== 'jornadas');
+}
+
+async function cargarFichajes() {
+  const f = S.fich;
+  if (S.vista !== 'fichajes') return;
+  const mes = f.mes;
+  ref('mes', app).textContent = mesLargo(mes);
+  try {
+    const j = await api(`/api/jornadas?mes=${mes}`);
+    if (S.vista !== 'fichajes' || f.mes !== mes) return;
+    f.datos = j;
+    renderJornadas();
+  } catch (e) {
+    if (e.status === 401 || S.vista !== 'fichajes') return;
+    ref('filas', app).innerHTML = `<tr><td class="suave">${esc(e.message)}</td></tr>`;
+  }
+  await cargarIncidenciasFichajes();
+}
+
+async function cargarIncidenciasFichajes() {
+  const f = S.fich;
+  if (S.vista !== 'fichajes') return;
+  try {
+    const r = await api(`/api/incidencias?estado=${f.filtros.estado}${f.filtros.tecnico_id ? `&tecnico_id=${f.filtros.tecnico_id}` : ''}`);
+    if (S.vista !== 'fichajes') return;
+    ponerContadorFichajes(r.pendientes);
+    const lista = ref('lista', app);
+    lista.innerHTML = r.incidencias.length ? '' : `<div class="vacio">${f.filtros.estado === 'pendiente' ? 'No hay incidencias pendientes.' : 'Sin incidencias.'}</div>`;
+    for (const i of r.incidencias) lista.append(tarjetaIncidencia(i, { oficina: true, gestionar: !!r.puede_gestionar, alCambiar: cargarFichajes }));
+  } catch (e) {
+    if (e.status !== 401 && S.vista === 'fichajes') ref('lista', app).innerHTML = `<div class="vacio">${esc(e.message)}</div>`;
+  }
+}
+
+function renderJornadas() {
+  const j = S.fich.datos;
+  const INICIAL = ['D', 'L', 'M', 'X', 'J', 'V', 'S'];
+  ref('jornada', app).textContent = `Jornada de ${j.horas_dia} h, de lunes a viernes. Horas en decimal.`;
+  ref('cabecera', app).innerHTML = `<tr><th class="f-tec">Técnico</th><th class="f-total">Total</th><th class="f-dato">Espera</th><th class="f-dato">Sin O.T.</th><th class="f-falta">Falta</th>${j.dias.map((d) =>
+    `<th class="${d.laborable ? '' : 'finde'}${d.dia === j.hoy ? ' es-hoy' : ''}">${Number(d.dia.slice(8))}<small>${INICIAL[fechaLocal(d.dia).getDay()]}</small></th>`).join('')}</tr>`;
+  const filas = ref('filas', app);
+  filas.innerHTML = '';
+  let bajos = 0;
+  for (const t of j.tecnicos) {
+    if (t.totales.dias_bajos) bajos += 1;
+    const tr = document.createElement('tr');
+    tr.dataset.tecnico = t.id;
+    tr.innerHTML = `<td class="f-tec"><a href="#horas/${t.id}">${esc(t.nombre)}</a>${t.rol === 'sat' ? '<small>SAT externo</small>' : ''}${t.activo ? '' : '<small>Inactivo</small>'}</td>`
+      + `<td class="f-total">${horasDec(t.totales.total)} h</td><td class="f-dato">${t.totales.espera ? `${horasDec(t.totales.espera)} h` : '—'}</td><td class="f-dato">${t.totales.comodin ? `${horasDec(t.totales.comodin)} h` : '—'}</td>`
+      + `<td class="f-falta">${t.totales.falta ? `${horasDec(t.totales.falta)} h · ${t.totales.dias_bajos} d` : '—'}</td>`
+      + t.dias.map((d) => {
+        const texto = d.total > 0 ? horasDec(d.total) : (d.estado === 'sin_fichar' ? '0' : '');
+        const titulo = `${diaSemana(d.dia)}: ${d.total ? duracionSeg(d.total) : 'sin fichajes'}${d.falta ? ` · faltan ${duracionSeg(d.falta)}` : ''}${d.revisar ? ' · fichaje a revisar' : ''}${d.pendientes ? ' · corrección pendiente' : ''}`;
+        return `<td class="celda c-${d.estado}" data-dia="${d.dia}" title="${esc(titulo)}">${texto}${d.revisar || d.pendientes ? '<i class="marca"></i>' : ''}</td>`;
+      }).join('');
+    filas.append(tr);
+  }
+  if (!j.tecnicos.length) filas.innerHTML = '<tr><td class="suave">No hay técnicos.</td></tr>';
+  filas.onclick = (e) => {
+    const tr = e.target.closest('tr[data-tecnico]');
+    if (!tr) return;
+    S.horas.mes = S.fich.mes;
+    const td = e.target.closest('td.celda');
+    if (!td || td.classList.contains('c-futuro')) return;   // el enlace del nombre navega solo
+    S.horas.abrir = td.dataset.dia;
+    location.hash = `horas/${tr.dataset.tecnico}`;
+  };
+  ref('contador', app).textContent = bajos ? `${bajos} técnico${bajos > 1 ? 's' : ''} con días por debajo de ${j.horas_dia} h` : '';
+  const sel = ref('filtros', app).elements.tecnico_id;
+  sel.innerHTML = '<option value="">Todos</option>' + j.tecnicos.map((t) => `<option value="${t.id}">${esc(t.nombre)}</option>`).join('');
+  sel.value = S.fich.filtros.tecnico_id;
 }
 
 // ---------------------------------------------------------------------------

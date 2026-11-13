@@ -162,6 +162,10 @@ validar.js           validadores de entrada y ErrorHttp
 rutas-maestros.js    API: clientes, máquinas, estados, técnicos, usuarios
 rutas-ot.js          API: O.T., estados, asignaciones, Tablero
 rutas-planificador.js API: Planificador (calendario, bandeja, bloques, avisos)
+tiempos.js           cronómetro por tramos y checklist de la O.T. (lógica)
+rutas-tecnico.js     API: Mi día, cronómetro y checklist del técnico
+fichajes.js          jornadas, O.T. comodín e incidencias de fichaje (lógica)
+rutas-fichajes.js    API: comodín, jornadas e incidencias
 karve.js             conexión de SOLO LECTURA a Karve por ODBC (driver portable en driver-sql/, ignorado por git)
 public/              interfaz: acceso.html, index.html, style.css, app.js, img/
 tests/               pruebas automáticas (ejecutar-fase3.ps1, arneses HTTP y de navegador; historico/ con los de las Fases 1-2)
@@ -261,3 +265,38 @@ Lo que hace el servidor:
 - El detalle de la O.T. trae los tramos, los totales frente a lo previsto en el Planificador, el checklist y qué falta para finalizar; el Tablero y el Planificador reciben la fase del cronómetro en marcha.
 
 Para que aparezcan columnas hacen falta usuarios activos con rol Técnico o SAT externo (Usuarios → Nuevo usuario); conviene ponerles su código de operario de Karve para que la importación de O.T. les enlace las suyas. La jornada visible (07:00–19:00) y las horas por día (8) se pueden cambiar en el `.env` con `PLANIFICADOR_HORA_INICIO`, `PLANIFICADOR_HORA_FIN` y `PLANIFICADOR_HORAS_DIA` (hay que reiniciar).
+
+## 17. Fichajes: jornada de 8 h, O.T. comodín e incidencias (Fase 4)
+
+Tres piezas que van juntas: que cada técnico justifique su jornada, que tenga dónde imputar las horas que no son de un cliente, y que lo fichado solo cambie con una corrección aprobada.
+
+**O.T. comodín.** Una por técnico y mes (tabla `comodines`, código `CM-AAAAMM-NNN`); se crea sola la primera vez que el técnico imputa algo ese mes. No es una fila de `ot`: no lleva cliente, estado ni número de Karve, y no aparece en el Tablero ni en el Planificador. Sus tramos van a la misma tabla `ot_tiempos` que los de las O.T. (con `comodin_id` y `concepto`, tipo `comodin`), así que comparten cronómetro, resumen de horas y correcciones. Los conceptos están en `comodin_conceptos`: cuatro de trabajo (trabajos de taller, formación, sin trabajo asignado y otros, que pide una nota) y tres de **ausencia** (vacaciones, baja médica y festivo). Se cambian en esa tabla (`nombre`, `orden`, `pide_nota`, `ausencia`); para retirar uno se desactiva (`activo = 0`), porque si se borra, el arranque lo vuelve a crear.
+
+**Jornada.** Por técnico y día se suma lo fichado (un tramo cuenta en el día en que empieza) y se compara con `PLANIFICADOR_HORAS_DIA` (8). Se marcan los días **laborables ya pasados** del rol Técnico que no llegan: "no llega" (algo fichado) o "sin fichar" (nada). Límites que conviene conocer:
+
+- Laborable = de lunes a viernes. **No hay calendario laboral**: un festivo, un día de vacaciones o una baja sale como "sin fichar" hasta que se imputa al comodín con su concepto de ausencia (normalmente 8 h, de 08:00 a 16:00; el diálogo lo propone). Lo hace la oficina desde Fichajes, o el técnico pidiéndolo desde Mis horas.
+- Las ausencias no se fichan con el cronómetro (no salen entre los conceptos de "Horas sin O.T.") y son lo único que se puede imputar a un día que aún no ha terminado o no ha llegado; desde las pantallas solo se llega hasta hoy.
+- Solo cuenta desde el **primer fichaje** de cada técnico: quien aún no usa la aplicación no aparece con todo el mes en rojo.
+- Al SAT externo no se le exige jornada (ficha, pero no sale como "no llega").
+
+**Incidencias de fichaje** (tabla `incidencias`, preparada para otros tipos más adelante). El técnico pide desde "Mis horas" corregir un tramo (horas o tipo), quitarlo o añadir uno que falta, a una de sus O.T. o al comodín, siempre con motivo. Quien tiene el permiso `fichajes.gestionar` (administrativo y responsable de servicio técnico) la aprueba —se aplica y el tramo queda marcado como corregido— o la rechaza con una respuesta. El técnico puede retirarla mientras esté pendiente. Si la corrección la hace la oficina directamente, es una incidencia que nace aprobada: el rastro es el mismo. Reglas:
+
+- Un fichaje con el cronómetro en marcha no se corrige (hay que pararlo antes), ni uno que ya tiene una incidencia pendiente.
+- Un fichaje no puede pasar de medianoche, ni caer en el futuro, ni solaparse con otro del mismo técnico (se comprueba al pedir y otra vez al aprobar).
+- El técnico solo puede añadir tiempo a una O.T. suya (asignada, con un bloque suyo o en la que ya ha fichado); la oficina, a cualquiera, también por número.
+- Cada corrección aplicada a una O.T. queda en su historial con el antes, el después y el motivo; la incidencia guarda las dos fotos aunque el tramo se quite.
+
+Pantallas: el técnico tiene en **Mi día** el aviso de los días de la última semana que no llegan y la tarjeta "Horas sin O.T.", y la vista **Mis horas**. La oficina con `fichajes.ver` (administrativo, responsable y gerencia, esta solo para mirar) tiene **Fichajes**: jornadas de todos los técnicos por mes, con el total, la espera de acceso, las horas sin O.T. y lo que falta, e incidencias; el contador rojo de la cabecera son las pendientes. Desde una celda se entra en las horas de ese técnico.
+
+API (`rutas-fichajes.js`, lógica en `fichajes.js`):
+
+| Ruta | Para qué |
+|---|---|
+| `POST /api/comodin/crono { accion: empezar \| parar, concepto, nota? }` | Cronómetro del comodín (técnico y SAT). Con el cronómetro en una O.T., 409 salvo `cerrar_otra: true` |
+| `GET /api/jornadas?mes=AAAA-MM` (o `desde` y `hasta`, máx. 62 días) `[&tecnico_id]` | Horas por técnico y día con su estado; el técnico solo recibe las suyas |
+| `GET /api/jornadas/dia?dia=AAAA-MM-DD[&tecnico_id]` | Tramos del día, O.T. a las que puede imputar e incidencias de ese día |
+| `GET /api/incidencias?estado=pendiente\|resueltas\|todas[&tecnico_id]` · `GET /api/incidencias/pendientes` | Listado y contador |
+| `POST /api/incidencias { accion: modificar \| anadir \| quitar, motivo, … }` | Pedir una corrección (técnico) o aplicarla (oficina, con `tecnico_id`) |
+| `POST /api/incidencias/:id/resolver { aprobar, respuesta? }` · `DELETE /api/incidencias/:id` | Aprobar o rechazar · retirar la propia |
+
+**Al actualizar desde una versión anterior**, el primer arranque reconstruye la tabla `ot_tiempos` (para admitir tramos sin O.T.) conservando los fichajes y sus identificadores; lo dice en la consola (`BD: tabla de tiempos reconstruida para el comodín`). Como en cualquier actualización, conviene una copia de `.cache/datos.db` antes.

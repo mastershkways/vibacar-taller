@@ -57,6 +57,36 @@ function verificarClave(clave, guardado) {
 // ---------------------------------------------------------------------------
 // Migraciones
 // ---------------------------------------------------------------------------
+// F4-06: cronómetro del técnico, por tramos. Cada tramo es un intervalo de un tipo (desplazamiento, espera de acceso, trabajo);
+// fin NULL = en marcha. Un técnico solo puede tener un tramo abierto (índice único parcial). La hora la pone el servidor.
+// F4-07: un tramo va a una O.T. o al comodín del mes (uno de los dos, nunca ambos), así que `ot_id` admite NULL. Las bases
+// creadas antes lo tenían NOT NULL: migrarTiemposComodin() reconstruye la tabla (SQLite no deja quitar un NOT NULL).
+const SQL_OT_TIEMPOS = (tabla) => `
+CREATE TABLE IF NOT EXISTS ${tabla} (
+  id             INTEGER PRIMARY KEY AUTOINCREMENT,
+  ot_id          INTEGER REFERENCES ot(id) ON DELETE CASCADE,   -- NULL en los tramos del comodín
+  comodin_id     INTEGER REFERENCES comodines(id),              -- comodín del mes (F4-07); NULL en los tramos de una O.T.
+  tecnico_id     INTEGER NOT NULL REFERENCES usuarios(id),
+  bloque_id      INTEGER REFERENCES ot_bloques(id) ON DELETE SET NULL,  -- bloque del Planificador al que corresponde (previsto frente a real)
+  tipo           TEXT    NOT NULL,                 -- desplazamiento | espera | trabajo | comodin
+  concepto       TEXT,                             -- solo comodín: comodin_conceptos.codigo
+  inicio         TEXT    NOT NULL,
+  fin            TEXT,                             -- NULL = cronómetro en marcha
+  cierre         TEXT,                             -- cómo se cerró: cambio (de fase) | parar (por hoy) | pausa | fin | estado | otra_ot | manual
+  origen         TEXT    NOT NULL DEFAULT 'crono', -- crono | manual (creado o corregido por una incidencia de fichaje, F4-08)
+  revisar        INTEGER NOT NULL DEFAULT 0,       -- 1 = tramo sospechoso (cerrado otro día o de más de 12 h): para las incidencias de fichaje
+  nota           TEXT,
+  incidencia_id  INTEGER,                          -- última incidencia de fichaje aplicada a este tramo
+  creado         TEXT    NOT NULL DEFAULT (datetime('now','localtime')),
+  CHECK ((ot_id IS NULL) <> (comodin_id IS NULL))
+);
+`;
+const INDICES_OT_TIEMPOS = `CREATE INDEX IF NOT EXISTS idx_ot_tiempos_ot ON ot_tiempos(ot_id);
+CREATE INDEX IF NOT EXISTS idx_ot_tiempos_tecnico ON ot_tiempos(tecnico_id, inicio);
+CREATE INDEX IF NOT EXISTS idx_ot_tiempos_bloque ON ot_tiempos(bloque_id);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_ot_tiempos_abierto ON ot_tiempos(tecnico_id) WHERE fin IS NULL;
+`;
+
 const TABLAS = `
 CREATE TABLE IF NOT EXISTS usuarios (
   id          INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -248,26 +278,48 @@ CREATE TABLE IF NOT EXISTS ot_bloques (
 CREATE INDEX IF NOT EXISTS idx_ot_bloques_ot ON ot_bloques(ot_id);
 CREATE INDEX IF NOT EXISTS idx_ot_bloques_tecnico_dia ON ot_bloques(tecnico_id, dia);
 
--- F4-06: cronómetro del técnico, por tramos. Cada tramo es un intervalo de un tipo (desplazamiento, espera de acceso, trabajo);
--- fin NULL = en marcha. Un técnico solo puede tener un tramo abierto (índice único parcial). La hora la pone el servidor.
-CREATE TABLE IF NOT EXISTS ot_tiempos (
+-- F4-07: O.T. comodín. Una por técnico y mes (decisión de gerencia, 2026-11-02): recoge las horas que no van a la O.T. de un
+-- cliente (taller, formación, sin trabajo asignado...). No es una fila de la tabla ot: no lleva cliente, estado ni número de Karve.
+CREATE TABLE IF NOT EXISTS comodines (
   id          INTEGER PRIMARY KEY AUTOINCREMENT,
-  ot_id       INTEGER NOT NULL REFERENCES ot(id) ON DELETE CASCADE,
   tecnico_id  INTEGER NOT NULL REFERENCES usuarios(id),
-  bloque_id   INTEGER REFERENCES ot_bloques(id) ON DELETE SET NULL,  -- bloque del Planificador al que corresponde (previsto frente a real)
-  tipo        TEXT    NOT NULL,                 -- desplazamiento | espera | trabajo
-  inicio      TEXT    NOT NULL,
-  fin         TEXT,                             -- NULL = cronómetro en marcha
-  cierre      TEXT,                             -- cómo se cerró: cambio (de fase) | parar (por hoy) | pausa | fin | estado | otra_ot
-  origen      TEXT    NOT NULL DEFAULT 'crono', -- crono | manual (correcciones de fichaje, F4-08)
-  revisar     INTEGER NOT NULL DEFAULT 0,       -- 1 = tramo sospechoso (cerrado otro día o de más de 12 h): para las incidencias de fichaje
-  nota        TEXT,
-  creado      TEXT    NOT NULL DEFAULT (datetime('now','localtime'))
+  mes         TEXT    NOT NULL,                 -- 'AAAA-MM'
+  codigo      TEXT    NOT NULL UNIQUE,          -- 'CM-AAAAMM-NNN' (NNN = id del técnico)
+  creado      TEXT    NOT NULL DEFAULT (datetime('now','localtime')),
+  UNIQUE (tecnico_id, mes)
 );
-CREATE INDEX IF NOT EXISTS idx_ot_tiempos_ot ON ot_tiempos(ot_id);
-CREATE INDEX IF NOT EXISTS idx_ot_tiempos_tecnico ON ot_tiempos(tecnico_id, inicio);
-CREATE INDEX IF NOT EXISTS idx_ot_tiempos_bloque ON ot_tiempos(bloque_id);
-CREATE UNIQUE INDEX IF NOT EXISTS idx_ot_tiempos_abierto ON ot_tiempos(tecnico_id) WHERE fin IS NULL;
+CREATE TABLE IF NOT EXISTS comodin_conceptos (
+  codigo     TEXT    PRIMARY KEY,
+  nombre     TEXT    NOT NULL,
+  orden      INTEGER NOT NULL DEFAULT 1,
+  pide_nota  INTEGER NOT NULL DEFAULT 0,        -- 1 = hay que escribir qué se ha hecho
+  ausencia   INTEGER NOT NULL DEFAULT 0,        -- 1 = vacaciones, baja, festivo: no se ficha con el cronómetro, se imputa el día
+  semilla    INTEGER NOT NULL DEFAULT 0,        -- 1 = lista de arranque, a sustituir por la real de Vibacar
+  activo     INTEGER NOT NULL DEFAULT 1
+);
+${SQL_OT_TIEMPOS('ot_tiempos')}${INDICES_OT_TIEMPOS}
+-- F4-08: incidencias. De momento solo de fichaje (tipo = 'fichaje'): el técnico pide corregir, añadir o quitar un tramo y lo
+-- aprueba o rechaza la oficina; antes y propuesta (JSON) guardan el rastro aunque el tramo cambie o desaparezca.
+CREATE TABLE IF NOT EXISTS incidencias (
+  id              INTEGER PRIMARY KEY AUTOINCREMENT,
+  tipo            TEXT    NOT NULL DEFAULT 'fichaje',
+  estado          TEXT    NOT NULL DEFAULT 'pendiente',  -- pendiente | aprobada | rechazada | anulada (la retira quien la pidió)
+  tecnico_id      INTEGER NOT NULL REFERENCES usuarios(id),   -- de quién es el fichaje
+  solicitante_id  INTEGER NOT NULL REFERENCES usuarios(id),   -- quién la abre (el técnico, o la oficina si corrige directamente)
+  accion          TEXT    NOT NULL,                      -- modificar | anadir | quitar
+  tramo_id        INTEGER,                               -- tramo afectado o creado (sin REFERENCES: puede quitarse y el rastro sigue)
+  ot_id           INTEGER REFERENCES ot(id) ON DELETE SET NULL,
+  dia             TEXT    NOT NULL,                      -- día de la jornada afectada
+  motivo          TEXT    NOT NULL,
+  antes           TEXT,                                  -- JSON del tramo antes de la corrección
+  propuesta       TEXT,                                  -- JSON de cómo debe quedar
+  resuelto_por    INTEGER REFERENCES usuarios(id),
+  resuelto        TEXT,
+  respuesta       TEXT,
+  creado          TEXT    NOT NULL DEFAULT (datetime('now','localtime'))
+);
+CREATE INDEX IF NOT EXISTS idx_incidencias_estado ON incidencias(estado, tipo);
+CREATE INDEX IF NOT EXISTS idx_incidencias_tecnico ON incidencias(tecnico_id, dia);
 
 -- F4-05: checklist. Plantillas por tipo de O.T. (preventivo...) con sus puntos; al abrir la O.T. se copian a ot_checklist para que
 -- cambiar la plantilla no altere las O.T. ya hechas. resultado NULL = sin responder.
@@ -315,6 +367,8 @@ CREATE TABLE IF NOT EXISTS sincronizaciones (
 // Columnas añadidas después de la primera versión. Formato: [tabla, columna, definición SQL].
 // Cuando haga falta una columna nueva, se añade aquí y migrar() la crea si no existe.
 const COLUMNAS_NUEVAS = [
+  // F4-07: conceptos de ausencia del comodín (las bases que ya tenían la tabla de conceptos).
+  ['comodin_conceptos', 'ausencia', 'INTEGER NOT NULL DEFAULT 0'],
   // Preparación para la Fase 5: los usuarios podrían venir/sincronizarse desde Karve.
   ['usuarios', 'karve_id', 'TEXT'],                       // identificador del usuario en Karve
   ['usuarios', 'origen', "TEXT NOT NULL DEFAULT 'local'"], // local = clave en esta BD | karve = validación delegada
@@ -459,9 +513,30 @@ function migrarTableroV2() {
   console.log(`   BD: Tablero v2: ${activos.length} estados antiguos retirados; O.T. recolocadas: ${Object.entries(porEstado).map(([e, n]) => `${e} ${n}`).join(', ') || 'ninguna'}`);
 }
 
+// F4-07: las bases anteriores tienen `ot_tiempos.ot_id` NOT NULL y sin las columnas del comodín. Se reconstruye la tabla
+// (crear la nueva, copiar, borrar la vieja, renombrar, índices) en una sola transacción; los ids de los tramos se conservan.
+function migrarTiemposComodin() {
+  const col = db.prepare('PRAGMA table_info(ot_tiempos)').all().find((c) => c.name === 'ot_id');
+  if (!col || !col.notnull) return;
+  const n = db.prepare('SELECT COUNT(*) AS n FROM ot_tiempos').get().n;
+  db.transaction(() => {
+    db.exec('DROP TABLE IF EXISTS ot_tiempos_v2');
+    db.exec(SQL_OT_TIEMPOS('ot_tiempos_v2'));
+    db.exec(`INSERT INTO ot_tiempos_v2 (id, ot_id, tecnico_id, bloque_id, tipo, inicio, fin, cierre, origen, revisar, nota, creado)
+             SELECT id, ot_id, tecnico_id, bloque_id, tipo, inicio, fin, cierre, origen, revisar, nota, creado FROM ot_tiempos`);
+    db.exec('DROP TABLE ot_tiempos');
+    db.exec('ALTER TABLE ot_tiempos_v2 RENAME TO ot_tiempos');
+    db.exec(INDICES_OT_TIEMPOS);
+    const copiados = db.prepare('SELECT COUNT(*) AS n FROM ot_tiempos').get().n;
+    if (copiados !== n) throw new Error(`migrarTiemposComodin: había ${n} tramos y se han copiado ${copiados}`);
+  })();
+  console.log(`   BD: tabla de tiempos reconstruida para el comodín (${n} tramos conservados)`);
+}
+
 function migrar() {
   db.exec(TABLAS);
   for (const [tabla, columna, definicion] of COLUMNAS_NUEVAS) asegurarColumna(tabla, columna, definicion);
+  migrarTiemposComodin();
   migrarRoles();
   migrarNumeracion();
   sembrar();
@@ -514,6 +589,19 @@ const CHECKLIST_SEMILLA = {
   puntos: ['Revisión visual', 'Niveles', 'Engrase', 'Pruebas de funcionamiento'],
 };
 
+// F4-07: conceptos del comodín. Los cuatro de trabajo, validados por Sendoa el 2026-11-13, y tres de ausencia (decisión suya
+// del mismo día: en vez de un calendario laboral, el día de vacaciones, baja o festivo se imputa al comodín y la jornada cuadra).
+// [codigo, nombre, orden, pide_nota, ausencia]
+const CONCEPTOS_COMODIN_SEMILLA = [
+  ['taller',     'Trabajos de taller',     1, 0, 0],
+  ['formacion',  'Formación',              2, 0, 0],
+  ['sin_tarea',  'Sin trabajo asignado',   3, 0, 0],
+  ['otros',      'Otros',                  4, 1, 0],
+  ['vacaciones', 'Vacaciones',             5, 0, 1],
+  ['baja',       'Baja médica',            6, 0, 1],
+  ['festivo',    'Festivo',                7, 0, 1],
+];
+
 // OFICINA = los que mandan sobre la O.T. (F3-05); se usa al migrar transiciones antiguas. Desde F4-04 el flujo es libre.
 const OFICINA = ['administrativo', 'responsable_st', 'operativo'];
 
@@ -544,6 +632,14 @@ const sembrar = db.transaction(() => {
     CHECKLIST_SEMILLA.puntos.forEach((texto, i) => ins.run(info.lastInsertRowid, i + 1, texto));
     console.log(`   BD: cargada la plantilla de checklist "${CHECKLIST_SEMILLA.nombre}" (${CHECKLIST_SEMILLA.puntos.length} puntos)`);
   }
+  {
+    // Los conceptos de la lista que falten se añaden (también en bases que ya tenían otros); los existentes no se tocan.
+    // Para retirar uno, se desactiva (activo = 0): si se borra, vuelve.
+    const ins = db.prepare('INSERT OR IGNORE INTO comodin_conceptos (codigo, nombre, orden, pide_nota, ausencia, semilla) VALUES (?, ?, ?, ?, ?, 1)');
+    let nuevos = 0;
+    for (const c of CONCEPTOS_COMODIN_SEMILLA) nuevos += ins.run(...c).changes;
+    if (nuevos) console.log(`   BD: añadidos ${nuevos} conceptos del comodín`);
+  }
   if (tablaVacia('usuarios')) {
     const usuario = (process.env.APP_USUARIO || '').trim();
     const clave = process.env.APP_CLAVE || '';
@@ -559,4 +655,4 @@ const sembrar = db.transaction(() => {
 
 migrar();
 
-module.exports = { db, migrar, ahora, hashClave, verificarClave, ROLES, RUTA_BD, ESTADO_V2_POR_ANTIGUO, CHECKLIST_SEMILLA };
+module.exports = { db, migrar, ahora, hashClave, verificarClave, ROLES, RUTA_BD, ESTADO_V2_POR_ANTIGUO, CHECKLIST_SEMILLA, CONCEPTOS_COMODIN_SEMILLA };

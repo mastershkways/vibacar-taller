@@ -1,7 +1,7 @@
 # Lanza las pruebas de las Fases 3 a 4 sin tocar la base real: base temporal + seed + servidor en 5055 por ciclo,
 # navegador headless (Brave/Chrome/Edge) para las de interfaz y las pruebas de migración (roles y Tablero v2).
 # Uso: powershell -ExecutionPolicy Bypass -File tests\ejecutar-fase3.ps1 [-SinNavegador] [-Solo tecnico,planificador] [-Brave "C:\ruta\brave.exe"]
-#   -Solo: lista de ciclos a lanzar (clientes2, maquinas2, tablero2, tablero2nav, planificador, planificadornav, tecnico, tecniconav, karve, migraciones); sin él, todos.
+#   -Solo: lista de ciclos a lanzar (clientes2, maquinas2, tablero2, tablero2nav, planificador, planificadornav, tecnico, tecniconav, fichajes, fichajesnav, karve, migraciones); sin él, todos.
 param(
   [string]$Brave = "C:\Program Files\BraveSoftware\Brave-Browser\Application\brave.exe",
   [switch]$SinNavegador,
@@ -86,6 +86,8 @@ Ciclo 'planificador' @('cliente-prueba-planificador.js')
 Ciclo 'planificadornav' @('navegador-prueba-planificador.js')
 Ciclo 'tecnico' @('cliente-prueba-tecnico.js')
 Ciclo 'tecniconav' @('navegador-prueba-tecnico.js')
+Ciclo 'fichajes' @('cliente-prueba-fichajes.js')
+Ciclo 'fichajesnav' @('navegador-prueba-fichajes.js')
 
 if (-not (Quiere 'karve')) { }
 elseif (Select-String -Path (Join-Path $raiz '.env') -Pattern '^KARVE_COPIA_CONNECTION_STRING=' -Quiet -ErrorAction SilentlyContinue) {
@@ -104,6 +106,9 @@ if (Quiere 'migraciones') {
   Write-Host "`n### Bloques automáticos de la importación de Karve (base sintética, sin Karve)" -ForegroundColor Green
   $env:RUTA_BD = Join-Path $tmp 'bloques-auto.db'; $env:APP_USUARIO = 'admin_prueba'; $env:APP_CLAVE = 'clave-prueba-123'
   Ejecutar-Script 'prueba-bloques-automaticos.js'
+  Write-Host "`n### Migración de los tiempos al comodín (tabla ot_tiempos antigua)" -ForegroundColor Green
+  $env:RUTA_BD = Join-Path $tmp 'migracion-tiempos.db'; $env:APP_USUARIO = 'admin_prueba'; $env:APP_CLAVE = 'clave-prueba-123'
+  Ejecutar-Script 'prueba-migracion-tiempos.js'
 }
 
 if ($brv) { Stop-Process -Id $brv.Id -Force -ErrorAction SilentlyContinue; Matar-Puerto 9333 }

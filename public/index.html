@@ -135,6 +135,62 @@
   </div>
 </template>
 
+<!-- F4-07 / F4-08: horas de un técnico por mes ("Mis horas" para él; la oficina llega desde Fichajes) -->
+<template id="tpl-horas">
+  <div class="barra-vista horas-barra">
+    <button class="btn oculto" type="button" data-accion="volver">‹ Fichajes</button>
+    <h2 data-ref="titulo">Mis horas</h2>
+    <div class="mes-nav">
+      <button class="btn" type="button" data-accion="mes-ant" aria-label="Mes anterior">‹</button>
+      <b data-ref="mes"></b>
+      <button class="btn" type="button" data-accion="mes-sig" aria-label="Mes siguiente">›</button>
+    </div>
+  </div>
+  <div class="horas-resumen" data-ref="resumen"></div>
+  <div class="horas-incidencias" data-ref="incidencias"></div>
+  <div class="horas-dias" data-ref="dias"><div class="vacio">Cargando…</div></div>
+</template>
+
+<!-- F4-07 / F4-08: jornadas de todos los técnicos e incidencias de fichaje (oficina) -->
+<template id="tpl-fichajes">
+  <div class="barra-vista">
+    <h2>Fichajes</h2>
+    <span class="contador" data-ref="contador"></span>
+    <div class="conmutador" data-ref="pestanas">
+      <button type="button" data-pestana="jornadas">Jornadas</button>
+      <button type="button" data-pestana="incidencias">Incidencias <span class="n-pend" data-ref="n-pend"></span></button>
+    </div>
+    <div class="mes-nav" data-ref="mes-nav">
+      <button class="btn btn-pequeno" type="button" data-accion="mes-ant" aria-label="Mes anterior">‹</button>
+      <b data-ref="mes"></b>
+      <button class="btn btn-pequeno" type="button" data-accion="mes-sig" aria-label="Mes siguiente">›</button>
+    </div>
+  </div>
+  <div data-ref="panel-jornadas">
+    <div class="fich-leyenda">
+      <span><i class="c-ok"></i> Jornada completa</span>
+      <span><i class="c-bajo"></i> No llega</span>
+      <span><i class="c-sin_fichar"></i> Sin fichar</span>
+      <span><i class="c-hoy"></i> Hoy</span>
+      <span><i class="marca"></i> Fichaje a revisar o corrección pendiente</span>
+      <span class="suave" data-ref="jornada"></span>
+    </div>
+    <div class="tabla-envoltorio fich-envoltorio">
+      <table class="tabla fich-tabla">
+        <thead data-ref="cabecera"></thead>
+        <tbody data-ref="filas"><tr><td class="suave">Cargando…</td></tr></tbody>
+      </table>
+    </div>
+  </div>
+  <div class="oculto" data-ref="panel-incidencias">
+    <form class="filtros" data-ref="filtros" autocomplete="off">
+      <div><label>Mostrar</label><select name="estado"><option value="pendiente">Pendientes</option><option value="resueltas">Resueltas</option><option value="todas">Todas</option></select></div>
+      <div><label>Técnico</label><select name="tecnico_id"><option value="">Todos</option></select></div>
+    </form>
+    <div class="incidencias" data-ref="lista"></div>
+  </div>
+</template>
+
 <template id="tpl-listado">
   <div class="barra-vista">
     <h2>Órdenes de trabajo</h2>
@@ -570,6 +626,43 @@
           <button class="btn btn-primario btn-grande" type="button" data-ref="confirmar"></button>
           <button class="btn btn-grande" type="button" data-accion="cerrar">Cancelar</button>
         </div>
+      </div>
+    </div>
+  </div>
+</template>
+
+<!-- F4-08: pedir una corrección de fichaje (técnico) o corregir directamente (oficina) -->
+<template id="tpl-correccion">
+  <div class="modal-fondo tablet">
+    <div class="modal estrecho">
+      <div class="modal-cabecera">
+        <h2 data-ref="titulo"></h2>
+        <button class="cerrar" type="button" data-accion="cerrar" aria-label="Cerrar">×</button>
+      </div>
+      <div class="modal-cuerpo">
+        <div class="pista" data-ref="resumen"></div>
+        <div data-ref="avisos"></div>
+        <form data-ref="form" autocomplete="off">
+          <div data-ref="bloque-destino">
+            <label>¿A qué va ese tiempo?</label>
+            <select name="destino"></select>
+            <input class="oculto" type="text" name="ot_numero" inputmode="numeric" maxlength="20" placeholder="Nº de la O.T." aria-label="Número de la O.T.">
+          </div>
+          <div data-ref="bloque-tipo">
+            <label data-ref="et-tipo">Tipo de tiempo</label>
+            <select name="tipo"></select>
+          </div>
+          <div class="fila" data-ref="bloque-horas">
+            <div><label>Desde</label><input type="time" name="inicio" required></div>
+            <div><label>Hasta</label><input type="time" name="fin" required></div>
+          </div>
+          <label>Motivo</label>
+          <textarea name="motivo" class="dictado" maxlength="500" required placeholder="Qué ha pasado"></textarea>
+          <div class="acciones">
+            <button class="btn btn-primario btn-grande" type="submit" data-ref="guardar"></button>
+            <button class="btn btn-grande" type="button" data-accion="cerrar">Cancelar</button>
+          </div>
+        </form>
       </div>
     </div>
   </div>

@@ -10,6 +10,9 @@
 // `ot_checklist`, de modo que cambiar la plantilla no altera las O.T. ya hechas. Cada punto se responde: hecho, no aplica o
 // incidencia (con nota).
 //
+// Comodín (F4-07): un tramo puede ir al comodín del mes en vez de a una O.T. (`ot_id` NULL, `comodin_id` y `concepto`, tipo
+// 'comodin'). Comparte la regla de un solo tramo abierto por técnico. Su lógica (jornadas, incidencias) está en fichajes.js.
+//
 // Requisitos para finalizar (decisión de Sendoa, 2026-11-12): haber imputado tiempo de trabajo y tener el checklist respondido.
 // El técnico y el SAT no pueden saltárselos; la oficina (quien puede cerrar) sí, con `forzar`, y queda anotado en el historial.
 
@@ -17,7 +20,8 @@ const { db, ahora } = require('./db');
 const { ErrorHttp } = require('./validar');
 
 const TIPOS = ['desplazamiento', 'espera', 'trabajo'];
-const NOMBRE_TIPO = { desplazamiento: 'Desplazamiento', espera: 'Espera de acceso', trabajo: 'Trabajo' };
+const TIPO_COMODIN = 'comodin';
+const NOMBRE_TIPO = { desplazamiento: 'Desplazamiento', espera: 'Espera de acceso', trabajo: 'Trabajo', comodin: 'Comodín' };
 const RESULTADOS = ['hecho', 'no_aplica', 'incidencia'];
 const HORAS_REVISAR = 12;                                    // un tramo más largo (o cerrado otro día) se marca para revisar (F4-08)
 const ESTADOS_CON_CHECKLIST = ['pendiente_planificar', 'planificada', 'en_curso', 'pausada'];
@@ -26,13 +30,16 @@ const ESTADOS_CON_CHECKLIST = ['pendiente_planificar', 'planificada', 'en_curso'
 const SEGUNDOS = (fin, inicio) => `CAST(strftime('%s', ${fin}) - strftime('%s', ${inicio}) AS INTEGER)`;
 
 const stmt = {
-  abiertoDe: db.prepare(`SELECT t.*, o.numero, ${SEGUNDOS('?', 't.inicio')} AS segundos FROM ot_tiempos t JOIN ot o ON o.id = t.ot_id WHERE t.tecnico_id = ? AND t.fin IS NULL`),
+  abiertoDe: db.prepare(`
+    SELECT t.*, o.numero, cm.codigo AS comodin_codigo, cc.nombre AS concepto_nombre, ${SEGUNDOS('?', 't.inicio')} AS segundos
+      FROM ot_tiempos t LEFT JOIN ot o ON o.id = t.ot_id LEFT JOIN comodines cm ON cm.id = t.comodin_id LEFT JOIN comodin_conceptos cc ON cc.codigo = t.concepto
+     WHERE t.tecnico_id = ? AND t.fin IS NULL`),
   abiertosOT: db.prepare('SELECT * FROM ot_tiempos WHERE ot_id = ? AND fin IS NULL'),
   cerrar: db.prepare('UPDATE ot_tiempos SET fin = ?, cierre = ?, revisar = ? WHERE id = ? AND fin IS NULL'),
-  abrir: db.prepare('INSERT INTO ot_tiempos (ot_id, tecnico_id, bloque_id, tipo, inicio, nota) VALUES (?, ?, ?, ?, ?, ?)'),
+  abrir: db.prepare('INSERT INTO ot_tiempos (ot_id, comodin_id, tecnico_id, bloque_id, tipo, concepto, inicio, nota) VALUES (?, ?, ?, ?, ?, ?, ?, ?)'),
   bloqueDelDia: db.prepare('SELECT id FROM ot_bloques WHERE ot_id = ? AND tecnico_id = ? AND dia = ? ORDER BY hora_inicio, id LIMIT 1'),
   tramos: db.prepare(`
-    SELECT t.id, t.ot_id, t.tecnico_id, u.nombre AS tecnico_nombre, t.bloque_id, t.tipo, t.inicio, t.fin, t.cierre, t.origen, t.revisar, t.nota,
+    SELECT t.id, t.ot_id, t.tecnico_id, u.nombre AS tecnico_nombre, t.bloque_id, t.tipo, t.inicio, t.fin, t.cierre, t.origen, t.revisar, t.nota, t.incidencia_id,
            ${SEGUNDOS('COALESCE(t.fin, ?)', 't.inicio')} AS segundos
       FROM ot_tiempos t JOIN usuarios u ON u.id = t.tecnico_id
      WHERE t.ot_id = ? ORDER BY t.inicio, t.id`),
@@ -79,11 +86,27 @@ function cerrarTramo(tramo, motivo, cuando = ahora()) {
 }
 
 // Abre un tramo para el técnico en la O.T. (el llamante ya ha cerrado el anterior). Lo enlaza con su bloque de hoy, si lo tiene.
-function abrirTramo({ otId, tecnicoId, tipo, nota = null, cuando = ahora() }) {
+// Con `comodinId` + `concepto` (y sin `otId`) el tramo va al comodín del mes.
+function abrirTramo({ otId = null, comodinId = null, concepto = null, tecnicoId, tipo, nota = null, cuando = ahora() }) {
+  if (comodinId) return stmt.abrir.run(null, comodinId, tecnicoId, null, TIPO_COMODIN, concepto, cuando, nota).lastInsertRowid;
   if (!TIPOS.includes(tipo)) throw new ErrorHttp(400, `El tipo de tiempo debe ser uno de: ${TIPOS.join(', ')}`);
   const bloque = stmt.bloqueDelDia.get(otId, tecnicoId, cuando.slice(0, 10));
-  return stmt.abrir.run(otId, tecnicoId, bloque ? bloque.id : null, tipo, cuando, nota).lastInsertRowid;
+  return stmt.abrir.run(otId, null, tecnicoId, bloque ? bloque.id : null, tipo, null, cuando, nota).lastInsertRowid;
 }
+
+// El cronómetro en marcha tal como lo recibe la tablet. En el comodín no hay O.T.: `comodin` = 1 y `nombre` es el concepto.
+function cronoPublico(t) {
+  if (!t) return null;
+  const comodin = t.comodin_id ? 1 : 0;
+  return {
+    id: t.id, ot_id: t.ot_id, numero: t.numero || null, comodin, concepto: t.concepto || null, tipo: t.tipo,
+    nombre: comodin ? (t.concepto_nombre || t.concepto || NOMBRE_TIPO.comodin) : NOMBRE_TIPO[t.tipo],
+    inicio: t.inicio, segundos: t.segundos, otro_dia: t.otro_dia,
+  };
+}
+
+// "la O.T. 0000107951 (trabajo)" o "el comodín (Formación)": dónde tiene el técnico el cronómetro en marcha.
+const dondeEsta = (t) => (t.comodin_id ? `el comodín (${t.concepto_nombre || t.concepto})` : `la O.T. ${t.numero} (${NOMBRE_TIPO[t.tipo].toLowerCase()})`);
 
 // Cierra todos los tramos abiertos de una O.T. (de cualquier técnico): la O.T. deja de estar en curso. Devuelve cuántos.
 function cerrarTramosOT(otId, motivo, cuando = ahora()) {
@@ -145,7 +168,7 @@ function requisitosFinalizar(ot) {
 }
 
 module.exports = {
-  TIPOS, NOMBRE_TIPO, RESULTADOS, SEGUNDOS, textoDuracion,
-  abiertoDe, cerrarTramo, abrirTramo, cerrarTramosOT, totales, tiemposOT,
+  TIPOS, TIPO_COMODIN, NOMBRE_TIPO, RESULTADOS, HORAS_REVISAR, SEGUNDOS, textoDuracion, segundosEntre,
+  abiertoDe, cerrarTramo, abrirTramo, cronoPublico, dondeEsta, cerrarTramosOT, totales, tiemposOT,
   asegurarChecklist, checklistOT, responderPunto, requisitosFinalizar,
 };

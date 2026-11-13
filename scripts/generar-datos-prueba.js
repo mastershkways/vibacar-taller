@@ -37,7 +37,7 @@ if (limpiar) {
     ['jruiz', 'Jon Ruiz', 'comercial', '0000028'],
   ];
   const purgar = db.transaction(() => {
-    for (const t of ['ot_tiempos', 'ot_checklist', 'ot_bloques', 'ot_asignaciones', 'ot_historial', 'ot', 'maquinas', 'cliente_contactos', 'clientes', 'sincronizaciones', 'sesiones', 'usuarios', 'contadores']) db.exec(`DELETE FROM ${t}`);
+    for (const t of ['incidencias', 'ot_tiempos', 'comodines', 'ot_checklist', 'ot_bloques', 'ot_asignaciones', 'ot_historial', 'ot', 'maquinas', 'cliente_contactos', 'clientes', 'sincronizaciones', 'sesiones', 'usuarios', 'contadores']) db.exec(`DELETE FROM ${t}`);
     db.exec("DELETE FROM sqlite_sequence");
     const ins = db.prepare('INSERT INTO usuarios (usuario, nombre, clave_hash, rol, karve_id) VALUES (?, ?, ?, ?, ?)');
     ins.run(adminUsuario, 'Administrador', hashClave(adminClave), 'administrativo', null);

@@ -563,6 +563,141 @@ body.modo-ficha #toasts { bottom: 170px; }
 .accion-terminar:disabled { background: var(--fondo-3); border-color: var(--borde-fuerte); color: var(--texto-suave); opacity: 1; }
 .accion-terminar:disabled small { color: var(--texto-suave) !important; }
 
+/* --- 4.5c Fichajes: comodín, "Mis horas", jornadas e incidencias (F4-07 / F4-08) ---------------------------------------- */
+.fase-comodin { --fase: #475569; --fase-fondo: #f1f5f9; }
+.crono-banner .btn { min-height: var(--toque); white-space: nowrap; }
+.midia-resumen.con-comodin { grid-template-columns: repeat(5, 1fr); }
+.seccion-comodin h3 { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; font-size: 14px; text-transform: uppercase; letter-spacing: .04em; color: var(--texto-suave); }
+.comodin-tarjeta {
+  display: flex; flex-direction: column; gap: 10px; padding: 16px;
+  background: var(--tarjeta); border: 1px dashed var(--borde-fuerte); border-left: 6px solid var(--fase, #475569);
+  border-radius: var(--radio-l); box-shadow: var(--sombra-1);
+}
+.comodin-tarjeta.con-crono { border-style: solid; border-color: var(--fase); background: linear-gradient(var(--fase-fondo), var(--tarjeta) 70%); }
+.comodin-titulo { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; font-size: 17px; font-weight: 600; }
+.comodin-titulo .crono-tiempo { font-size: 24px; }
+.comodin-tarjeta .tarea-botones .btn:first-child { flex: 1; }
+.aviso-jornada {
+  display: flex; flex-direction: column; gap: 8px; padding: 14px 16px;
+  background: var(--aviso-fondo); border: 1px solid var(--aviso-borde); border-left: 6px solid var(--aviso); border-radius: var(--radio-l);
+}
+.aviso-jornada h3 { font-size: 16px; color: var(--aviso-texto); }
+.aviso-jornada .dias-bajos { display: flex; flex-direction: column; gap: 6px; }
+.aviso-jornada .dia-bajo {
+  display: flex; align-items: center; gap: 10px; width: 100%; min-height: var(--toque); padding: 8px 12px; text-align: left;
+  background: var(--tarjeta); border: 1px solid var(--aviso-borde); border-radius: var(--radio); font: inherit; cursor: pointer; color: var(--texto);
+}
+.aviso-jornada .dia-bajo b { text-transform: capitalize; }
+.aviso-jornada .dia-bajo small { margin-left: auto; color: var(--aviso-texto); font-weight: 600; white-space: nowrap; }
+.aviso-jornada .pendientes { font-size: 14px; color: var(--texto-suave); }
+
+/* Horas de un técnico por mes */
+.horas-barra, .horas-resumen, .horas-incidencias, .horas-dias { max-width: 860px; margin-left: auto; margin-right: auto; }
+.mes-nav { display: inline-flex; align-items: center; gap: 8px; }
+.mes-nav b { min-width: 150px; text-align: center; }
+.horas-resumen { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; margin-bottom: 18px; }
+.pill.falta { border-left-color: var(--aviso); }
+.pill.falta.bien { border-left-color: var(--ok); }
+.horas-incidencias { margin-bottom: 18px; }
+.horas-incidencias details, .dia {
+  background: var(--tarjeta); border: 1px solid var(--borde); border-radius: var(--radio-l); box-shadow: var(--sombra-1);
+}
+.horas-incidencias summary { cursor: pointer; font-weight: 700; min-height: var(--toque); display: flex; align-items: center; gap: 8px; padding: 0 16px; }
+.horas-incidencias .incidencias { padding: 0 16px 16px; }
+.horas-dias { display: flex; flex-direction: column; gap: 8px; }
+.dia { border-left: 6px solid var(--borde-fuerte); }
+.dia.e-ok { border-left-color: var(--ok); }
+.dia.e-bajo { border-left-color: var(--aviso); }
+.dia.e-sin_fichar { border-left-color: var(--error); }
+.dia.e-hoy { border-left-color: var(--naranja); }
+.dia summary {
+  display: grid; grid-template-columns: 96px minmax(40px, 1fr) auto auto; align-items: center; gap: 12px;
+  min-height: 54px; padding: 8px 14px; cursor: pointer; list-style: none;
+}
+.dia summary::-webkit-details-marker { display: none; }
+.dia-fecha { font-weight: 700; text-transform: capitalize; white-space: nowrap; }
+.dia-barra { height: 10px; border-radius: 999px; background: var(--fondo-3); overflow: hidden; display: flex; }
+.dia-barra i { display: block; height: 100%; background: var(--fase, var(--borde-fuerte)); }
+.dia-total { font-variant-numeric: tabular-nums; white-space: nowrap; }
+.dia-estado { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; justify-content: flex-end; }
+.dia-estado .dato-chip.falta { background: var(--aviso-fondo); border-color: var(--aviso-borde); color: var(--aviso-texto); }
+.dia-estado .dato-chip.sin { background: var(--error-fondo, #fef2f2); border-color: var(--error); color: var(--error); }
+.dia-cuerpo { padding: 4px 14px 14px; border-top: 1px solid var(--borde); }
+.dia-cuerpo .vacio { padding: 14px; }
+.tramos-dia li { flex-wrap: wrap; padding: 8px 0; border-bottom: 1px solid var(--borde); }
+.tramos-dia li:last-child { border-bottom: 0; }
+.tramos-dia .tr-hora { font-weight: 700; white-space: nowrap; }
+.tramos-dia .tr-que { flex: 1; min-width: 150px; }
+.tramos-dia .tr-que small { color: var(--texto-suave); }
+.tramos-dia .tr-marcas { display: flex; gap: 6px; flex-wrap: wrap; }
+.tramos-dia .tr-botones { display: flex; gap: 6px; margin-left: auto; }
+.dato-chip.manual { background: var(--fondo-2); color: var(--texto-suave); }
+.dato-chip.revisar { background: var(--aviso-fondo); border-color: var(--aviso-borde); color: var(--aviso-texto); }
+.dia-pie { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 10px; }
+
+/* Diálogo de corrección: horas con el mismo tamaño de dedo que el resto del formulario */
+.modal-fondo.tablet input[type=time], .modal-fondo.tablet input[type=text] { min-height: 56px; font-size: 18px; }
+.modal-fondo.tablet input[type=time] {
+  width: 100%; padding: 8px 12px; background: var(--tarjeta); color: var(--texto); font-family: inherit;
+  border: 1px solid var(--borde-fuerte); border-radius: var(--radio-s);
+}
+
+/* Incidencias de fichaje */
+.incidencias { display: flex; flex-direction: column; gap: 10px; }
+.incidencia {
+  display: flex; flex-direction: column; gap: 6px; padding: 12px 14px;
+  background: var(--tarjeta); border: 1px solid var(--borde); border-left: 6px solid var(--borde-fuerte); border-radius: var(--radio);
+}
+.incidencia.e-pendiente { border-left-color: var(--aviso); }
+.incidencia.e-aprobada { border-left-color: var(--ok); }
+.incidencia.e-rechazada { border-left-color: var(--error); }
+.inc-cab { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.inc-cab .chip { margin-left: auto; }
+.inc-cambio { font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+.inc-cambio s { color: var(--texto-suave); }
+.inc-motivo { color: var(--texto); overflow-wrap: anywhere; }
+.inc-motivo::before { content: "“"; } .inc-motivo::after { content: "”"; }
+.inc-pie { font-size: 13px; color: var(--texto-suave); overflow-wrap: anywhere; }
+.inc-botones { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 4px; }
+.chip.e-pendiente { background: var(--aviso); }
+.chip.e-aprobada { background: var(--ok); }
+.chip.e-rechazada { background: var(--error); }
+.chip.e-anulada { background: var(--texto-suave); }
+
+/* Jornadas de todos los técnicos (oficina): una fila por técnico, una celda por día */
+.n-pend:not(:empty), .nav-contador {
+  display: inline-block; min-width: 20px; padding: 1px 6px; margin-left: 4px; border-radius: 999px;
+  background: var(--error); color: #fff; font-size: 12px; font-weight: 700; text-align: center; line-height: 1.5;
+}
+.fich-leyenda { display: flex; gap: 16px; flex-wrap: wrap; align-items: center; margin-bottom: 10px; font-size: 13px; color: var(--texto-suave); }
+.fich-leyenda i { display: inline-block; width: 14px; height: 14px; border-radius: 4px; vertical-align: -2px; border: 1px solid var(--borde-fuerte); }
+.fich-leyenda i.marca { width: 8px; height: 8px; border-radius: 50%; border: 0; background: var(--error); vertical-align: 1px; }
+.fich-leyenda .suave { margin-left: auto; }
+.fich-envoltorio { overflow-x: auto; }
+.fich-tabla { border-collapse: separate; border-spacing: 0; }
+.fich-tabla th, .fich-tabla td { padding: 6px 2px; text-align: center; font-size: 13px; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.fich-tabla thead th { position: sticky; top: 0; }
+.fich-tabla th small { display: block; font-weight: 500; font-size: 10px; color: var(--texto-tenue); text-transform: uppercase; }
+.fich-tabla th.finde { color: var(--texto-tenue); }
+.fich-tabla th.es-hoy { color: var(--naranja-texto); }
+.fich-tabla .f-tec { position: sticky; left: 0; z-index: 1; min-width: 160px; max-width: 220px; padding: 8px 12px; text-align: left; background: var(--tarjeta); font-weight: 700; overflow: hidden; text-overflow: ellipsis; }
+.fich-tabla .f-tec small { display: block; font-weight: 500; color: var(--texto-suave); font-size: 12px; text-transform: none; }
+.fich-tabla tbody tr { cursor: default; }
+.fich-tabla tbody tr:hover { background: transparent; }
+.fich-tabla td.celda { min-width: 28px; cursor: pointer; border-left: 1px solid var(--borde); position: relative; }
+.fich-tabla td.celda:hover { outline: 2px solid var(--naranja); outline-offset: -2px; }
+.fich-tabla td.c-futuro, .fich-tabla td.c-libre { cursor: default; color: var(--texto-tenue); background: var(--fondo-2); }
+.fich-tabla td.c-futuro:hover { outline: 0; }
+.c-ok { background: var(--ok-fondo); color: var(--ok); }
+.c-bajo { background: var(--aviso-fondo); color: var(--aviso-texto); font-weight: 700; }
+.c-sin_fichar { background: #fee2e2; color: var(--error); font-weight: 700; }
+.c-hoy { background: var(--naranja-suave); color: var(--naranja-texto); font-weight: 700; }
+.fich-tabla td .marca { position: absolute; top: 3px; right: 3px; width: 6px; height: 6px; border-radius: 50%; background: var(--error); }
+.fich-tabla .f-total { padding: 6px 8px; border-left: 1px solid var(--borde); font-weight: 700; }
+.fich-tabla .f-dato { padding: 6px 8px; color: var(--texto-suave); }
+.fich-tabla .f-falta { padding: 6px 8px; font-weight: 700; color: var(--aviso-texto); border-right: 2px solid var(--borde-fuerte); }
+.fich-tabla th.f-falta, .fich-tabla th.f-total, .fich-tabla th.f-dato { color: var(--texto-suave); font-weight: 700; }
+
 /* Fase del cronómetro en el Tablero y en el Planificador; bloques puestos por la importación de Karve */
 .tarjeta .dato-chip { margin-top: 2px; }
 .bloque .b-auto { margin-left: 4px; padding: 0 4px; border: 1px solid var(--borde-fuerte); border-radius: 4px; font-size: 10px; font-weight: 700; text-transform: uppercase; color: var(--texto-suave); }
@@ -739,6 +874,19 @@ table.tabla { width: 100%; border-collapse: collapse; font-size: 14px; }
   main#app { padding: 12px; }
   .barra-vista h2 { font-size: 20px; }
   .midia-resumen { grid-template-columns: 1fr 1fr; }
+  .midia-resumen.con-comodin { grid-template-columns: 1fr 1fr; }
+  .midia-resumen.con-comodin .pill.total { grid-column: 1 / -1; }
+  .horas-resumen { grid-template-columns: 1fr 1fr; }
+  .mes-nav b { min-width: 0; flex: 1; }
+  .horas-barra .mes-nav { width: 100%; }
+  .dia summary { grid-template-columns: 74px minmax(30px, 1fr) auto; gap: 8px; padding: 8px 10px; }
+  .dia-estado { grid-column: 1 / -1; justify-content: flex-start; }
+  .dia-estado:empty { display: none; }
+  .dia-cuerpo { padding: 4px 10px 12px; }
+  .tramos-dia .tr-botones { width: 100%; margin-left: 0; }
+  .tramos-dia .tr-botones .btn { flex: 1; }
+  .dia-pie .btn { flex: 1; }
+  .inc-botones .btn { flex: 1; }
   .crono-banner { padding: 10px 12px; gap: 8px; }
   .crono-banner .crono-tiempo { font-size: 20px; }
   .tarea { padding: 14px; }

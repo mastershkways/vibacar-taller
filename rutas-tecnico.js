@@ -13,6 +13,7 @@
 //     O.T. a "en curso". "parar" = parar por hoy: cierra el tramo y la O.T. sigue en curso (y en su tablero) para otro día.
 //     Pausar (falta repuesto, cliente…) y finalizar son cambios de estado (POST /api/ot/:id/estado): cierran el tramo abierto.
 //   - Un técnico solo tiene un cronómetro en marcha: si lo tiene en otra O.T., 409 con `abierto` salvo que mande `cerrar_otra`.
+//   - El comodín (horas sin O.T., F4-07) usa el mismo cronómetro: POST /api/comodin/crono, en rutas-fichajes.js.
 //   - La hora la pone el servidor; la respuesta lleva `inicio` y `segundos` para que la tablet solo pinte.
 
 const express = require('express');
@@ -23,6 +24,7 @@ const { ErrorHttp, texto, entero, enumerado, idRuta } = require('./validar');
 const rutasOT = require('./rutas-ot');
 const tiempos = require('./tiempos');
 const { JORNADA } = require('./rutas-planificador');
+const fichajes = require('./fichajes');
 
 const DIAS_PROXIMOS = 7;
 const TAREAS_MAX = 100;
@@ -81,7 +83,7 @@ const stmt = {
   firmaChecklist: db.prepare(`SELECT COUNT(*) AS n, COUNT(resultado) AS c, COALESCE(MAX(fecha), '') AS m FROM ot_checklist`),
 };
 
-const cronoPublico = (t) => (t ? { id: t.id, ot_id: t.ot_id, numero: t.numero, tipo: t.tipo, nombre: tiempos.NOMBRE_TIPO[t.tipo], inicio: t.inicio, segundos: t.segundos, otro_dia: t.otro_dia } : null);
+const cronoPublico = tiempos.cronoPublico;
 
 module.exports = function montarRutasTecnico(app) {
   const r = express.Router();
@@ -101,7 +103,7 @@ module.exports = function montarRutasTecnico(app) {
     if (!esFecha(dia)) throw new ErrorHttp(400, 'dia debe ser una fecha AAAA-MM-DD válida');
 
     const fb = stmt.firmaBloques.get(tecnico.id), fo = stmt.firmaOT.get(), ft = stmt.firmaTiempos.get(), fc = stmt.firmaChecklist.get();
-    const etag = `"${crypto.createHash('sha1').update(`midia|${tecnico.id}|${dia}|${hoyIso}|${fb.n}|${fb.s}|${fb.m}|${fo.n}|${fo.v}|${ft.n}|${ft.c}|${ft.m}|${fc.n}|${fc.c}|${fc.m}|${req.usuario.id}`).digest('hex').slice(0, 20)}"`;
+    const etag = `"${crypto.createHash('sha1').update(`midia|${tecnico.id}|${dia}|${hoyIso}|${fb.n}|${fb.s}|${fb.m}|${fo.n}|${fo.v}|${ft.n}|${ft.c}|${ft.m}|${fc.n}|${fc.c}|${fc.m}|${fichajes.firma()}|${req.usuario.id}`).digest('hex').slice(0, 20)}"`;
     if (req.headers['if-none-match'] === etag) return res.status(304).end();
 
     const abierto = tiempos.abiertoDe(tecnico.id);
@@ -119,7 +121,7 @@ module.exports = function montarRutasTecnico(app) {
         checklist: { total: p.total, respondidos: p.respondidos },
       };
     });
-    const resumen = { desplazamiento: 0, espera: 0, trabajo: 0, total: 0 };
+    const resumen = { desplazamiento: 0, espera: 0, trabajo: 0, comodin: 0, total: 0 };
     for (const f of stmt.resumenDia.all(ahora(), tecnico.id, dia)) { if (resumen[f.tipo] !== undefined) resumen[f.tipo] = f.s; resumen.total += f.s; }
 
     res.set('ETag', etag);
@@ -129,6 +131,10 @@ module.exports = function montarRutasTecnico(app) {
       tareas,
       proximos: stmt.proximos.all(tecnico.id, dia, sumarDias(dia, DIAS_PROXIMOS)),
       resumen: { ...resumen, previsto_min: stmt.previstoDia.get(tecnico.id, dia).min, horas_dia: JORNADA.horas_dia },
+      // F4-07: el comodín del mes (horas sin O.T.) y los días recientes por debajo de la jornada; F4-08: sus incidencias sin resolver.
+      comodin: fichajes.comodinPublico(tecnico.id, dia.slice(0, 7), dia),
+      jornadas_bajas: fichajes.jornadasBajas(tecnico, hoyIso),
+      incidencias_pendientes: fichajes.pendientesDe(tecnico.id),
     });
   });
 
@@ -158,11 +164,13 @@ module.exports = function montarRutasTecnico(app) {
       }
       if (abierto && abierto.ot_id !== id) {
         if (b.cerrar_otra !== true) {
-          throw new ErrorHttp(409, `Tienes el cronómetro en marcha en la O.T. ${abierto.numero} (${tiempos.NOMBRE_TIPO[abierto.tipo].toLowerCase()})`, { abierto: cronoPublico(abierto) });
+          throw new ErrorHttp(409, `Tienes el cronómetro en marcha en ${tiempos.dondeEsta(abierto)}`, { abierto: cronoPublico(abierto) });
         }
         tiempos.cerrarTramo(abierto, 'otra_ot', cuando);
-        const otra = stmt.estadoOT.get(abierto.ot_id);
-        stmt.historial.run(abierto.ot_id, otra.estado, otra.estado, usuario.id, cuando, `Cronómetro parado al empezar la O.T. ${ot.numero}`);
+        if (abierto.ot_id) {
+          const otra = stmt.estadoOT.get(abierto.ot_id);
+          stmt.historial.run(abierto.ot_id, otra.estado, otra.estado, usuario.id, cuando, `Cronómetro parado al empezar la O.T. ${ot.numero}`);
+        }
       } else if (abierto) {
         if (abierto.tipo === accion) throw new ErrorHttp(400, `Ya estás en "${tiempos.NOMBRE_TIPO[accion].toLowerCase()}" en esta O.T.`);
         tiempos.cerrarTramo(abierto, 'cambio', cuando);

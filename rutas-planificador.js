@@ -242,7 +242,8 @@ module.exports = function montarRutasPlanificador(app) {
     const firmaO = db.prepare(`SELECT COUNT(*) AS n, COALESCE(SUM(o.version), 0) AS v FROM ot o JOIN estados e ON e.codigo = o.estado JOIN fases fa ON fa.codigo = e.fase WHERE fa.abierta = 1`).get();
     const firmaT = db.prepare(`SELECT COUNT(*) AS n, COALESCE(SUM(id), 0) AS s FROM usuarios WHERE activo = 1 AND rol IN ('tecnico', 'sat')`).get();
     const firmaC = db.prepare('SELECT COUNT(*) AS n, COUNT(fin) AS c, COALESCE(MAX(id), 0) AS m FROM ot_tiempos').get();   // F4-06: cronómetro (previsto frente a real)
-    const etag = `"${crypto.createHash('sha1').update(`plan|${firmaB.n}|${firmaB.s}|${firmaB.m}|${firmaO.n}|${firmaO.v}|${firmaT.n}|${firmaT.s}|${firmaC.n}|${firmaC.c}|${firmaC.m}|${desde}|${hasta}|${conPausadas}|${hoyIso}|${req.usuario.rol}|${req.usuario.id}`).digest('hex').slice(0, 20)}"`;
+    const firmaI = db.prepare("SELECT COUNT(*) AS n, COALESCE(MAX(resuelto), '') AS m FROM incidencias WHERE estado = 'aprobada'").get();   // F4-08: una corrección cambia lo fichado
+    const etag = `"${crypto.createHash('sha1').update(`plan|${firmaB.n}|${firmaB.s}|${firmaB.m}|${firmaO.n}|${firmaO.v}|${firmaT.n}|${firmaT.s}|${firmaC.n}|${firmaC.c}|${firmaC.m}|${firmaI.n}|${firmaI.m}|${desde}|${hasta}|${conPausadas}|${hoyIso}|${req.usuario.rol}|${req.usuario.id}`).digest('hex').slice(0, 20)}"`;
     if (req.headers['if-none-match'] === etag) return res.status(304).end();
 
     // Bloques del rango, con los datos de su O.T. `fuera_alcance` = 1 si la O.T. no es de quien mira (ve la ocupación, no puede tocarla).

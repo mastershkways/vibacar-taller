@@ -4,7 +4,7 @@
 //   1. express.json
 //   2. rutas de acceso (login/salir/sesión)         → auth.js
 //   3. requiereSesion para TODO lo demás             → auth.js
-//   4. API de maestros, O.T. y planificador bajo /api → rutas-maestros.js, rutas-ot.js, rutas-planificador.js
+//   4. API de maestros, O.T. y planificador bajo /api → rutas-maestros.js, rutas-ot.js, rutas-planificador.js, rutas-tecnico.js, rutas-fichajes.js
 //   5. interfaz estática (public/)                   → index.html y recursos
 //   6. 404 JSON para /api y manejador de errores
 
@@ -19,6 +19,7 @@ const montarRutasMaestros = require('./rutas-maestros');
 const montarRutasOT = require('./rutas-ot');
 const montarRutasPlanificador = require('./rutas-planificador');
 const montarRutasTecnico = require('./rutas-tecnico');
+const montarRutasFichajes = require('./rutas-fichajes');
 
 const PORT = parseInt(process.env.PORT, 10) || 3010;
 const CARPETA_PUBLIC = path.join(__dirname, 'public');
@@ -49,6 +50,7 @@ montarRutasMaestros(app);
 montarRutasOT(app);
 montarRutasPlanificador(app);
 montarRutasTecnico(app);
+montarRutasFichajes(app);
 
 // 5. Estáticos
 app.use(express.static(CARPETA_PUBLIC));

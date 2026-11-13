@@ -49,7 +49,7 @@ const ACCIONES = {
   'ot.cerrar':              'Cerrar o reabrir una O.T. (estados finales)',
   'ot.asignar':             'Proponer un técnico para la O.T.',
   'ot.aprobar_asignacion':  'Aprobar o rechazar una propuesta de asignación',
-  'ot.tiempos':             'Registrar inicio, pausas y fin de trabajo',
+  'ot.tiempos':             'Fichar: cronómetro de las O.T. y del comodín, y pedir correcciones de fichaje',
   'ot.checklist':           'Responder el checklist obligatorio',
   'ot.fotos':               'Subir fotos de inicio y fin',
   'ot.firmar':              'Recoger la firma en la tablet',
@@ -71,6 +71,9 @@ const ACCIONES = {
   'planificador.ver':       'Ver el Planificador (calendario de bloques por técnico y día)',
   'planificador.editar':    'Planificar: crear, mover y quitar bloques de las O.T. de su alcance',
   'informes.ver':           'Ver informes y estadísticas',
+  // Fichajes (F4-07 / F4-08)
+  'fichajes.ver':           'Ver las jornadas de los técnicos (horas fichadas frente a la jornada) y las incidencias de fichaje',
+  'fichajes.gestionar':     'Aprobar o rechazar incidencias de fichaje y corregir fichajes',
 };
 
 // ---------------------------------------------------------------------------
@@ -81,7 +84,7 @@ const TODAS = Object.keys(ACCIONES);
 const MATRIZ = {
   administrativo: TODAS,
   responsable_st: TODAS.filter((a) => a !== 'usuarios.gestionar'),
-  gerencia: ['ot.ver', 'clientes.ver', 'maquinas.ver', 'kanban.ver', 'planificador.ver', 'informes.ver'],
+  gerencia: ['ot.ver', 'clientes.ver', 'maquinas.ver', 'kanban.ver', 'planificador.ver', 'informes.ver', 'fichajes.ver'],
   operativo: ['ot.ver', 'ot.crear', 'ot.editar', 'ot.cambiar_estado', 'ot.cerrar', 'ot.asignar', 'ot.aprobar_asignacion', 'clientes.ver', 'maquinas.ver', 'kanban.ver', 'planificador.ver', 'planificador.editar'],
 
   tecnico: [
